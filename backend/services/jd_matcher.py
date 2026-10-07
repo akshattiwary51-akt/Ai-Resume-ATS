@@ -1,27 +1,35 @@
-from typing import List, Dict
+from typing import List, Dict, Optional
 import numpy as np
-import spacy
-from sentence_transformers import SentenceTransformer
 
-from typing import List, Dict
-import numpy as np
-import spacy
-from sentence_transformers import SentenceTransformer
+try:
+    import spacy
+except ImportError:
+    spacy = None
+
+try:
+    from sentence_transformers import SentenceTransformer
+except ImportError:
+    SentenceTransformer = None
 
 from backend.utils.matching import fuzzy_match_keywords, normalize_skill
 from rapidfuzz import fuzz
 
 
 def calculate_semantic_similarity(
-    resume_text: str, jd_text: str, embedder: SentenceTransformer
+    resume_text: str, jd_text: str, embedder: Optional[object] = None
 ) -> float:
-    resume_emb = embedder.encode(resume_text[:5000], convert_to_tensor=False)
-    jd_emb     = embedder.encode(jd_text[:5000], convert_to_tensor=False)
+    if embedder is None or not resume_text or not jd_text:
+        return 0.0
+    try:
+        resume_emb = embedder.encode(resume_text[:5000], convert_to_tensor=False)
+        jd_emb     = embedder.encode(jd_text[:5000], convert_to_tensor=False)
 
-    similarity = np.dot(resume_emb, jd_emb) / (
-        np.linalg.norm(resume_emb) * np.linalg.norm(jd_emb)
-    )
-    return float(np.clip(similarity, 0.0, 1.0))
+        similarity = np.dot(resume_emb, jd_emb) / (
+            np.linalg.norm(resume_emb) * np.linalg.norm(jd_emb)
+        )
+        return float(np.clip(similarity, 0.0, 1.0))
+    except Exception:
+        return 0.0
 
 
 def identify_matched_keywords(
@@ -40,19 +48,30 @@ def identify_missing_keywords(
 
 
 def analyze_skills_gap(
-    resume_skills: List[str], jd_text: str, nlp: spacy.Language
+    resume_skills: List[str], jd_text: str, nlp: Optional[object] = None
 ) -> List[str]:
-    doc       = nlp(jd_text[:5000])
+    if not jd_text:
+        return []
     jd_skills = set()
 
-    for ent in doc.ents:
-        if ent.label_ in ['PRODUCT', 'ORG', 'LANGUAGE']:
-            jd_skills.add(ent.text.lower())
+    if nlp is not None:
+        try:
+            doc = nlp(jd_text[:5000])
+            for ent in doc.ents:
+                if ent.label_ in ['PRODUCT', 'ORG', 'LANGUAGE']:
+                    jd_skills.add(ent.text.lower())
 
-    for chunk in doc.noun_chunks:
-        ct = chunk.text.lower().strip()
-        if 1 <= len(ct.split()) <= 4:
-            jd_skills.add(ct)
+            for chunk in doc.noun_chunks:
+                ct = chunk.text.lower().strip()
+                if 1 <= len(ct.split()) <= 4:
+                    jd_skills.add(ct)
+        except Exception:
+            pass
+
+    if not jd_skills:
+        import re
+        words = re.findall(r'\b[A-Za-z][A-Za-z0-9+#.-]{2,}\b', jd_text)
+        jd_skills.update(w.lower() for w in words[:40])
 
     # Normalize resume skills for comparison
     resume_normalized = {normalize_skill(s) for s in resume_skills}
@@ -95,8 +114,8 @@ def compare_resume_with_jd(
     resume_skills: List[str],
     jd_text: str,
     jd_keywords: List[str],
-    embedder: SentenceTransformer,
-    nlp: spacy.Language,
+    embedder: Optional[object] = None,
+    nlp: Optional[object] = None,
 ) -> Dict:
     semantic_similarity = calculate_semantic_similarity(resume_text, jd_text, embedder)
     matched_keywords    = identify_matched_keywords(resume_keywords, jd_keywords)

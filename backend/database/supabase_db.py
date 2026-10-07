@@ -18,7 +18,12 @@ def _get_headers():
         "Prefer": "return=representation"
     }
 
-async def save_analysis(user_id: str, filename: str, analysis_result: Dict) -> Optional[str]:
+async def save_analysis(
+    user_id: str,
+    filename: str,
+    analysis_result: Dict,
+    job_title: Optional[str] = None
+) -> Optional[str]:
     headers = _get_headers()
     if not headers:
         return None
@@ -29,9 +34,15 @@ async def save_analysis(user_id: str, filename: str, analysis_result: Dict) -> O
         return str(o)
     serializable_result = json.loads(json.dumps(analysis_result, default=_json_default))
 
+    # Infer job title dynamically
+    parsed_exp = serializable_result.get("parsed_resume", {}).get("experience", [])
+    first_role = parsed_exp[0].get("job_title") if isinstance(parsed_exp, list) and len(parsed_exp) > 0 and isinstance(parsed_exp[0], dict) else None
+    inferred_title = job_title or serializable_result.get("job_title") or first_role or "Resume Analysis"
+
     doc = {
         "user_id": user_id,
         "filename": filename,
+        "job_title": inferred_title,
         "ats_score": serializable_result.get("ats_score", 0),
         "keyword_match": serializable_result.get("keyword_match", 0),
         "missing_keywords": serializable_result.get("missing_keywords", []),
@@ -77,17 +88,22 @@ async def get_user_history(user_id: str) -> List[Dict]:
             
             results = []
             for doc in docs:
+                analysis_res = doc.get("analysis_result", {})
+                parsed_exp = analysis_res.get("parsed_resume", {}).get("experience", [])
+                first_role = parsed_exp[0].get("job_title") if isinstance(parsed_exp, list) and len(parsed_exp) > 0 and isinstance(parsed_exp[0], dict) else None
+                resolved_title = doc.get("job_title") or first_role or "Resume Analysis"
+
                 results.append({
                     "id": str(doc.get("id")),
                     "filename": doc.get("filename", "resume"),
                     "resume_name": doc.get("filename", "resume"),
-                    "job_title": "Software Engineer",
+                    "job_title": resolved_title,
                     "ats_score": doc.get("ats_score", 0),
                     "keyword_match": doc.get("keyword_match", 0),
                     "missing_keywords": doc.get("missing_keywords", []),
                     "date": doc.get("created_at", ""),
                     "created_at": doc.get("created_at", ""),
-                    "analysis_result": doc.get("analysis_result", {}),
+                    "analysis_result": analysis_res,
                 })
             return results
     except Exception as exc:

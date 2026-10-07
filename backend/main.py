@@ -20,19 +20,31 @@ async def lifespan(app:FastAPI):
     logger.info('Starting ATS Resume Analyzer API...')
 
     logger.info(f'Loading spaCy NLP model: {SPACY_MODEL_PRIMARY}')
-    import spacy
     try:
-        app.state.nlp = spacy.load(SPACY_MODEL_PRIMARY)
-        logger.info(f'Loaded {SPACY_MODEL_PRIMARY}')
-    except OSError:
-        logger.warning(f'{SPACY_MODEL_PRIMARY} not found — falling back to {SPACY_MODEL_SECONDARY}')
-        app.state.nlp = spacy.load(SPACY_MODEL_SECONDARY)
-        logger.info(f'Loaded {SPACY_MODEL_SECONDARY} (fallback)')
+        import spacy
+        try:
+            app.state.nlp = spacy.load(SPACY_MODEL_PRIMARY)
+            logger.info(f'Loaded {SPACY_MODEL_PRIMARY}')
+        except OSError:
+            try:
+                logger.warning(f'{SPACY_MODEL_PRIMARY} not found — falling back to {SPACY_MODEL_SECONDARY}')
+                app.state.nlp = spacy.load(SPACY_MODEL_SECONDARY)
+                logger.info(f'Loaded {SPACY_MODEL_SECONDARY} (fallback)')
+            except OSError:
+                logger.warning("No spaCy model installed. Operating in deterministic mode.")
+                app.state.nlp = None
+    except ImportError:
+        logger.warning("spaCy not installed. Operating in deterministic mode.")
+        app.state.nlp = None
 
     logger.info(f'Loading SentenceTransformer: {SENTENCE_TRANSFORMER_MODEL}')
-    from sentence_transformers import SentenceTransformer
-    app.state.embedder = SentenceTransformer(SENTENCE_TRANSFORMER_MODEL)
-    logger.info(f'Loaded {SENTENCE_TRANSFORMER_MODEL}')
+    try:
+        from sentence_transformers import SentenceTransformer
+        app.state.embedder = SentenceTransformer(SENTENCE_TRANSFORMER_MODEL)
+        logger.info(f'Loaded {SENTENCE_TRANSFORMER_MODEL}')
+    except Exception as emb_err:
+        logger.warning(f"SentenceTransformer not available ({emb_err}). Operating in keyword/deterministic mode.")
+        app.state.embedder = None
 
     logger.info('All models loaded. API is ready to serve requests.')
 
@@ -64,7 +76,7 @@ app.include_router(router)
 async def root():
     return {
         'name':      'ATS Resume Analyzer API',
-        'version':   '2.0.0',
+        'version':   APP_VERSION,
         'endpoints': {
             'POST   /api/v1/analyze-resume': 'Analyze a resume',
             'GET    /api/v1/history':        'Get user history',

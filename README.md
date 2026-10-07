@@ -24,6 +24,8 @@ A web app that scores how well a resume matches a job description and returns ac
 ATS_SCORER/
 ├── backend/              FastAPI app, NLP services, API routes
 ├── frontend/             Streamlit app, views, components
+├── docs/                 Architecture and upgrade plan specifications
+├── tests/                Pytest suite (parsers, scoring, API endpoints)
 ├── jupyter notebooks/    Research and dataset prep (not used at runtime)
 ├── ml model/             Exported ML artifacts
 ├── requirements.txt      Combined backend + frontend dependencies
@@ -94,9 +96,18 @@ streamlit run frontend/streamlit_app.py
 
 The app opens at `http://localhost:8501`.
 
-## Notes for students
+### 6. Run the test suite
 
-- **Never commit `.env` or `secrets.toml`** — they hold API keys. Both are in `.gitignore`; check before you push.
-- The first run downloads the Sentence Transformer model (~80 MB). It's cached afterwards.
-- If you don't have a Groq key yet, the scoring still works — only the LLM suggestions section will be empty.
-- `jupyter notebooks/` and `ml model/` are for experimentation and aren't required to run the app.
+Run the automated pytest suite:
+
+```bash
+pytest tests -v
+```
+
+## Notes for students & developers
+
+- **Never commit `.env` or `secrets.toml`** — they hold API keys. Both are guarded in `.gitignore`.
+- **Deterministic fallback mode:** If you don't have a Groq API key configured yet, the platform automatically switches to its deterministic regex & NLP parser.
+- **Local Dev / Guest Mode:** When testing locally without Supabase configured, the platform runs in `DEV_MODE=true` allowing instant testing in guest mode.
+- The first run downloads the Sentence Transformer model (~80 MB) if enabled; it is cached afterwards.
+- `docs/ARCHITECTURE.md` and `docs/UPGRADE_PLAN.md` document the full architecture, bug audit, and roadmap.

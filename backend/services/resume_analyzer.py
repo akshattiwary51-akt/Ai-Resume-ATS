@@ -1,6 +1,16 @@
-import spacy
-from sentence_transformers import SentenceTransformer
+# pyrefly: ignore [missing-import]
 from typing import Dict, List, Optional
+
+try:
+    import spacy
+except ImportError:
+    spacy = None
+
+try:
+    from sentence_transformers import SentenceTransformer
+except ImportError:
+    SentenceTransformer = None
+
 from backend.models.schemas import IssueDetail
 from backend.services.groq_parser import parse_resume, parse_job_description
 from backend.services.jd_matcher import compare_resume_with_jd
@@ -10,8 +20,8 @@ from backend.services.ats_scorer import calculate_overall_score, validate_skills
 
 def analyze_full_resume(
     resume_text: str,
-    nlp: spacy.Language,
-    embedder: SentenceTransformer,
+    nlp: Optional[object] = None,
+    embedder: Optional[object] = None,
     job_description: Optional[str] = None,
 ) -> Dict:
     import logging
@@ -65,11 +75,20 @@ def analyze_full_resume(
             nlp=nlp,
         )
 
-    from backend.utils.file_utils import (
-        get_default_grammar_results, get_default_location_results,
+    from backend.utils.file_utils import get_default_grammar_results
+    from backend.services.ats_scorer import detect_location_info
+    from backend.services.recommendation_engine import (
+        generate_all_recommendations,
+        format_recommendations_for_api,
+        get_recommendation_summary,
     )
-    grammar_results  = get_default_grammar_results()
-    location_results = get_default_location_results()
+
+    grammar_results = get_default_grammar_results()
+    try:
+        location_results = detect_location_info(resume_text, nlp)
+    except Exception as loc_err:
+        from backend.utils.file_utils import get_default_location_results
+        location_results = get_default_location_results()
 
     scores = calculate_overall_score(
         text=resume_text,
@@ -95,6 +114,24 @@ def analyze_full_resume(
     )
 
     issues_summary = generate_issues_summary(detailed_feedback)
+
+    # Generate prioritized recommendations
+    raw_sections = {
+        'experience': ' '.join(e.get('description', '') for e in parsed_resume.get('experience', []) if isinstance(e, dict)),
+        'education': ' '.join(str(e) for e in parsed_resume.get('education', []) if isinstance(e, dict)),
+        'skills': ' '.join(skills),
+        'summary': parsed_resume.get('professional_summary', ''),
+    }
+    recs_result = generate_all_recommendations(
+        skill_validation_results=skill_validation,
+        grammar_results=grammar_results,
+        location_results=location_results,
+        score_results=scores,
+        sections=raw_sections,
+        resume_keywords=keywords,
+    )
+    recommendations_list = format_recommendations_for_api(recs_result)
+    recommendations_summary = get_recommendation_summary(recs_result)
 
     validated_raw   = skill_validation.get('validated_skills', [])
     unvalidated_raw = skill_validation.get('unvalidated_skills', [])
@@ -142,6 +179,10 @@ def analyze_full_resume(
         "interpretation":    scores.get('overall_interpretation', ''),
         "skill_validation_details": skill_validation_details,
         "experience_months": experience_months,
+        "parsed_resume":     parsed_resume,
+        "location_results":  location_results,
+        "recommendations":   recommendations_list,
+        "recommendations_summary": recommendations_summary,
     }
 
 

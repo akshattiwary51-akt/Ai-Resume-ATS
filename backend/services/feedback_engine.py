@@ -1,4 +1,7 @@
-so yeah#what is specifically wrong in my resume?
+"""
+Feedback engine — detects specific issues in parsed resumes
+and generates actionable, evidence-based improvement suggestions.
+"""
 
 import re
 from typing import List, Dict, Any, Optional

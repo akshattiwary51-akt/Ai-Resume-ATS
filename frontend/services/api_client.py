@@ -82,3 +82,73 @@ def get_history_pdf(analysis_id: str, access_token: str) -> bytes:
     )
     response.raise_for_status()
     return response.content
+
+
+def rewrite_bullet(
+    bullet: str,
+    target_role: str = "",
+    target_skill: str = "",
+    access_token: str = "dev-token",
+) -> Dict[str, Any]:
+    response = requests.post(
+        f"{_backend_url()}/api/v1/rewrite-bullet",
+        json={"bullet": bullet, "target_role": target_role, "target_skill": target_skill},
+        headers=_auth_headers(access_token),
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def generate_cover_letter(
+    candidate_name: str,
+    skills: List[str],
+    experience_highlights: List[str],
+    job_title: str,
+    company_name: str,
+    access_token: str = "dev-token",
+    job_description: str = "",
+) -> Dict[str, Any]:
+    payload = {
+        "candidate_name": candidate_name,
+        "skills": skills,
+        "experience_highlights": experience_highlights,
+        "job_title": job_title,
+        "company_name": company_name,
+        "job_description": job_description,
+    }
+    response = requests.post(
+        f"{_backend_url()}/api/v1/generate-cover-letter",
+        json=payload,
+        headers=_auth_headers(access_token),
+        timeout=45,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def generate_interview_prep(
+    skills: List[str],
+    job_title: str = "",
+    unvalidated_skills: List[str] = None,
+    access_token: str = "dev-token",
+) -> Dict[str, Any]:
+    payload = {
+        "skills": skills,
+        "job_title": job_title,
+        "unvalidated_skills": unvalidated_skills or [],
+    }
+    response = requests.post(
+        f"{_backend_url()}/api/v1/interview-prep",
+        json=payload,
+        headers=_auth_headers(access_token),
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def get_skill_taxonomy() -> Dict[str, Any]:
+    response = requests.get(f"{_backend_url()}/api/v1/skill-taxonomy", timeout=15)
+    response.raise_for_status()
+    return response.json()

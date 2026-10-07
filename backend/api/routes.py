@@ -4,7 +4,18 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
 from backend.api.auth import get_current_user
-from backend.models.schemas import AnalysisResponse, ComponentScores, JDComparison, SkillValidationDetails
+from backend.models.schemas import (
+    AnalysisResponse,
+    ComponentScores,
+    JDComparison,
+    SkillValidationDetails,
+    RewriteBulletRequest,
+    RewriteBulletResponse,
+    CoverLetterRequest,
+    CoverLetterResponse,
+    InterviewPrepRequest,
+    InterviewPrepResponse,
+)
 from backend.utils.file_utils import (
     get_default_grammar_results,
     get_default_location_results,
@@ -109,7 +120,10 @@ async def analyze_resume(
         matched_keywords=result.get('matched_keywords', []),
         skills=list(result.get('skills', [])[:20]),
         jd_comparison=jd_comparison_result,
-        interpretation=result.get('interpretation', '')
+        interpretation=result.get('interpretation', ''),
+        strengths=result.get('strengths', []),
+        recommendations=result.get('recommendations', []),
+        recommendations_summary=result.get('recommendations_summary', ''),
     )
 
 
@@ -180,10 +194,12 @@ async def generate_pdf(
                 "Content-Disposition": "attachment; filename=ats_report.pdf"
             }
         )
-    except Exception as e:
-        logger.error(f'Failed to generate PDF: {e}')
-        raise HTTPException(status_code=500, detail=f"Failed to generate PDF: {e}")
-    
+    except Exception as exc:
+        logger.exception("File parsing failed")
+    raise HTTPException(
+        status_code=422,
+        detail=f"Could not read or parse the resume: {exc}",
+    )
 
 @router.get('/history/{analysis_id}/pdf')
 async def generate_history_pdf(
@@ -215,3 +231,77 @@ async def generate_history_pdf(
     except Exception as e:
         logger.error(f'Failed to generate PDF for history: {e}')
         raise HTTPException(status_code=500, detail=f"Failed to generate PDF: {e}")
+
+
+@router.post('/rewrite-bullet', response_model=RewriteBulletResponse, tags=['AI Enhancement'])
+async def rewrite_bullet_endpoint(
+    payload: RewriteBulletRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """Rewrite a resume bullet point into an impactful, metrics-driven statement."""
+    from backend.services.ai_enhancer import rewrite_bullet_point
+    try:
+        return rewrite_bullet_point(
+            bullet=payload.bullet,
+            target_role=payload.target_role,
+            target_skill=payload.target_skill,
+        )
+    except Exception as exc:
+        logger.error(f"Bullet rewrite failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to rewrite bullet: {exc}")
+
+
+@router.post('/generate-cover-letter', response_model=CoverLetterResponse, tags=['AI Enhancement'])
+async def cover_letter_endpoint(
+    payload: CoverLetterRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """Generate a targeted, high-impact cover letter tailored to candidate background and role."""
+    from backend.services.ai_enhancer import generate_cover_letter
+    try:
+        return generate_cover_letter(
+            candidate_name=payload.candidate_name,
+            skills=payload.skills,
+            experience_highlights=payload.experience_highlights,
+            job_title=payload.job_title,
+            company_name=payload.company_name,
+            job_description=payload.job_description,
+        )
+    except Exception as exc:
+        logger.error(f"Cover letter generation failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate cover letter: {exc}")
+
+
+@router.post('/interview-prep', response_model=InterviewPrepResponse, tags=['AI Enhancement'])
+async def interview_prep_endpoint(
+    payload: InterviewPrepRequest,
+    user_id: str = Depends(get_current_user),
+):
+    """Generate technical and behavioral interview preparation questions."""
+    from backend.services.ai_enhancer import generate_interview_prep
+    try:
+        return generate_interview_prep(
+            skills=payload.skills,
+            job_title=payload.job_title,
+            unvalidated_skills=payload.unvalidated_skills,
+        )
+    except Exception as exc:
+        logger.error(f"Interview prep generation failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate interview prep: {exc}")
+
+
+@router.get('/skill-taxonomy', tags=['Taxonomy'])
+async def get_skill_taxonomy():
+    """Retrieve recognized canonical technical skills and domains."""
+    from backend.services.skill_taxonomy import SKILL_TAXONOMY
+    return {
+        "total_skills": len(SKILL_TAXONOMY),
+        "skills": [
+            {
+                "canonical": data["canonical"],
+                "category": data["category"],
+                "aliases": data["aliases"],
+            }
+            for data in SKILL_TAXONOMY.values()
+        ],
+    }

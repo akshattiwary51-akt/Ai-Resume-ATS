@@ -1,14 +1,74 @@
+# ── OS / Editor ──
 .DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
 
+.ruff_cache/
+.pyre/
+.pytype/
+.pyright/
+# ── Python ──
 __pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+.eggs/
 
+# ── Virtual environments ──
+venv/
+.venv/
+env/
+.env/
 
-# Datasets
-*.csv
+# ── Environment / Secrets ──
+.env
+.env.*
+!.env.example
+secrets.toml
+!secrets.toml.example
+*.pem
+*.key
 
-# Logs
+# ── Logs ──
+logs/
 *.log
 
-# ML models
+# ── ML models / data ──
 *.safetensors
 *.pkl
+*.h5
+*.pt
+*.onnx
+
+# ── Datasets ──
+*.csv
+
+# ── Generated reports ──
+generated_reports/
+*.pdf
+
+# ── IDE ──
+.vscode/
+.idea/
+*.iml
+
+# ── Node (for React frontend) ──
+node_modules/
+frontend/dist/
+frontend/build/
+.next/
+
+# ── Streamlit secrets ──
+frontend/.streamlit/secrets.toml
+
+# ── Testing ──
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/

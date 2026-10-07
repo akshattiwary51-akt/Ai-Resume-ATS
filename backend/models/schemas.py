@@ -51,3 +51,48 @@ class AnalysisResponse(BaseModel):
     jd_comparison: Optional[JDComparison] = None
     warnings: List[str] = []
     interpretation: str = ""
+    recommendations: List[Dict[str, Any]] = []
+    recommendations_summary: str = ""
+
+
+class RewriteBulletRequest(BaseModel):
+    bullet: str
+    target_role: Optional[str] = None
+    target_skill: Optional[str] = None
+
+
+class RewriteBulletResponse(BaseModel):
+    original: str
+    rewritten: str
+    action_verb: str
+    critique: str
+    suggested_metrics: List[str] = []
+    _source: str = "deterministic"
+
+
+class CoverLetterRequest(BaseModel):
+    candidate_name: str = "Candidate"
+    skills: List[str] = []
+    experience_highlights: List[str] = []
+    job_title: str = "Software Engineer"
+    company_name: str = "Target Company"
+    job_description: Optional[str] = None
+
+
+class CoverLetterResponse(BaseModel):
+    cover_letter: str
+    _source: str = "deterministic"
+
+
+class InterviewPrepRequest(BaseModel):
+    skills: List[str] = []
+    job_title: Optional[str] = None
+    unvalidated_skills: List[str] = []
+
+
+class InterviewPrepResponse(BaseModel):
+    target_role: str
+    technical_questions: List[Dict[str, Any]] = []
+    behavioral_questions: List[Dict[str, Any]] = []
+    unvalidated_skill_tips: List[str] = []
+

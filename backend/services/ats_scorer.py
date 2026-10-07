@@ -1,11 +1,21 @@
 import re
-import spacy
-import numpy as np
-from sentence_transformers import SentenceTransformer
 from typing import Dict, List, Optional, Tuple
+import numpy as np
+
+try:
+    import spacy
+except ImportError:
+    spacy = None
+
+try:
+    from sentence_transformers import SentenceTransformer
+except ImportError:
+    SentenceTransformer = None
 
 from backend.utils.file_utils import log_warning
 from backend.core.config import SENTENCE_TRANSFORMER_MODEL
+from backend.core.scoring_config import DEFAULT_SCORING_CONFIG, ATSScoringConfig
+from backend.services.skill_taxonomy import normalize_skill_name
 from backend.utils.matching import fuzzy_match_keywords
 
 ZIP_CODE_PATTERN = r'\b\d{5}(?:-\d{4})?\b'
@@ -15,22 +25,25 @@ STREET_ADDRESS_PATTERN = (
     r'(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Circle|Cir|Way|Place|Pl)\b'
 )
 
-def _tier_score(n: float, tiers:list)-> float:
+def _tier_score(n: float, tiers: list) -> float:
     for threshold, pts in tiers:
-        if n>=threshold:
+        if n >= threshold:
             return pts
-    
     return 0.0
 
-#Location/privacy detection
-def detect_location_info(text: str, nlp: spacy.Language) -> Dict:
+# Location/privacy detection
+def detect_location_info(text: str, nlp: Optional[object] = None) -> Dict:
     locations = []
 
-    #method01: spacy NER
-    doc = nlp(text)
-    for ent in doc.ents:
-        if ent.label_ in ['GPE', 'LOC']:
-            locations.append({'text': ent.text, 'type': ent.label_.lower(), 'start': ent.start_char})
+    # method 01: spacy NER (if nlp available)
+    if nlp is not None:
+        try:
+            doc = nlp(text)
+            for ent in doc.ents:
+                if ent.label_ in ['GPE', 'LOC']:
+                    locations.append({'text': ent.text, 'type': ent.label_.lower(), 'start': ent.start_char})
+        except Exception:
+            pass
 
     #moetod02: street address regx
     for match in re.finditer(STREET_ADDRESS_PATTERN, text, re.IGNORECASE):
@@ -72,9 +85,9 @@ def detect_location_info(text: str, nlp: spacy.Language) -> Dict:
         'penalty_applied':    penalty,
     }
 
-def _calculate_semantic_similarity(skill: str, text: str, embedder: SentenceTransformer) -> float:
-    #similarity = (A · B) / (|A| × |B|)
-    if not skill or not text:
+def _calculate_semantic_similarity(skill: str, text: str, embedder: Optional[object] = None) -> float:
+    # similarity = (A · B) / (|A| × |B|)
+    if not skill or not text or embedder is None:
         return 0.0
     try:
         skill_vec  = embedder.encode(skill, convert_to_tensor=False)
@@ -89,25 +102,29 @@ def _calculate_semantic_similarity(skill: str, text: str, embedder: SentenceTran
         log_warning(f"Similarity error for '{skill}': {e}", context='ats_scorer')
         return 0.0
 
-def _skill_matches(skill: str, text: str, embedder: SentenceTransformer, threshold: float) -> Tuple[bool, float]:
-
-    #fast, o(n) directly check if skill is a substring of the text (case-insensitive)
+def _skill_matches(skill: str, text: str, embedder: Optional[object] = None, threshold: float = 0.6) -> Tuple[bool, float]:
+    # fast, direct check if skill is a substring of the text (case-insensitive)
+    if not skill or not text:
+        return False, 0.0
     if skill.lower() in text.lower():
         return True, 1.0
     
-    #slow, semantic similarity check using sentence embeddings
+    if embedder is None:
+        return False, 0.0
+
+    # semantic similarity check using sentence embeddings
     sim = _calculate_semantic_similarity(skill, text, embedder)
     return sim >= threshold, sim
 
-#Skill validation
+# Skill validation
 def validate_skills_with_projects(
     skills: List[str],
     projects: List[Dict],
     experience_entries: List[Dict],
-    embedder: SentenceTransformer,
+    embedder: Optional[object] = None,
     threshold: float = 0.6,
+    config: ATSScoringConfig = DEFAULT_SCORING_CONFIG,
 ) -> Dict:
-    
     if not skills:
         return {
             'validated_skills':      [],
@@ -123,37 +140,86 @@ def validate_skills_with_projects(
         if isinstance(e, dict)
     ).strip()
 
-    validated_skills      = []
-    unvalidated_skills    = []
+    # Pre-build list of project candidate targets: (display_name, search_text)
+    targets: List[Tuple[str, str]] = []
+    for p in projects:
+        t_text = f"{p.get('title', '')} {p.get('description', '')}".strip()
+        if t_text:
+            targets.append((p.get('title', 'Untitled Project'), t_text))
+    if experience_text:
+        targets.append(('Experience Section', experience_text))
+
+    validated_skills = []
+    unvalidated_skills = []
     skill_project_mapping = {}
+    unmatched_skills = []
 
+    # Phase 1: Fast direct and alias containment matching (O(1) lookups)
     for skill in skills:
-        matching_projects = []
-        max_similarity    = 0.0
+        norm_skill = normalize_skill_name(skill).lower()
+        skill_lower = skill.lower()
+        matched_targets = []
+        for name, text in targets:
+            text_lower = text.lower()
+            if skill_lower in text_lower or norm_skill in text_lower:
+                matched_targets.append(name)
 
-        for project in projects:
-            project_text = f"{project.get('title', '')} {project.get('description', '')}"
-            matched, sim = _skill_matches(skill, project_text, embedder, threshold)
-            max_similarity = max(max_similarity, sim)
-
-            if matched:
-                matching_projects.append(project.get('title', 'Untitled Project'))
-
-        if experience_text:
-            matched, sim = _skill_matches(skill, experience_text, embedder, threshold)
-            max_similarity = max(max_similarity, sim)
-            if matched and 'Experience Section' not in matching_projects:
-                matching_projects.append('Experience Section')
-
-        if matching_projects:
-            validated_skills.append({'skill': skill, 'projects': matching_projects, 'similarity': max_similarity})
-            skill_project_mapping[skill] = matching_projects
+        if matched_targets:
+            validated_skills.append({
+                'skill': skill,
+                'projects': matched_targets,
+                'similarity': 1.0,
+            })
+            skill_project_mapping[skill] = matched_targets
         else:
-            unvalidated_skills.append(skill)
-            skill_project_mapping[skill] = []
+            unmatched_skills.append(skill)
+
+    # Phase 2: Vectorized batch semantic matching for remaining skills
+    if unmatched_skills and targets and embedder is not None:
+        try:
+            skill_vecs = embedder.encode(unmatched_skills, convert_to_tensor=False)
+            target_vecs = embedder.encode([t[1][:1000] for t in targets], convert_to_tensor=False)
+
+            skill_norms = np.linalg.norm(skill_vecs, axis=1, keepdims=True)
+            target_norms = np.linalg.norm(target_vecs, axis=1, keepdims=True)
+            skill_norms[skill_norms == 0] = 1e-9
+            target_norms[target_norms == 0] = 1e-9
+
+            # Cosine similarity matrix: shape (num_unmatched, num_targets)
+            sim_matrix = np.dot(skill_vecs / skill_norms, (target_vecs / target_norms).T)
+
+            for i, skill in enumerate(unmatched_skills):
+                matched_targets = []
+                max_sim = 0.0
+                for j, (name, _) in enumerate(targets):
+                    sim = float(sim_matrix[i, j])
+                    if sim >= threshold:
+                        matched_targets.append(name)
+                        max_sim = max(max_sim, sim)
+
+                if matched_targets:
+                    validated_skills.append({
+                        'skill': skill,
+                        'projects': matched_targets,
+                        'similarity': max_sim,
+                    })
+                    skill_project_mapping[skill] = matched_targets
+                else:
+                    unvalidated_skills.append(skill)
+                    skill_project_mapping[skill] = []
+        except Exception as e:
+            log_warning(f"Batch embedding validation fallback: {e}", context='ats_scorer')
+            for s in unmatched_skills:
+                unvalidated_skills.append(s)
+                skill_project_mapping[s] = []
+    else:
+        for s in unmatched_skills:
+            unvalidated_skills.append(s)
+            skill_project_mapping[s] = []
 
     validation_percentage = len(validated_skills) / len(skills)
-    validation_score      = validation_percentage * 15.0
+    max_val_score = config.component_max.skill_validation
+    validation_score = validation_percentage * max_val_score
 
     return {
         'validated_skills':      validated_skills,
@@ -242,8 +308,16 @@ def _calc_content_score(
     achievement_count = sum(len(re.findall(p, text, re.IGNORECASE)) for p in number_patterns)
     score += _tier_score(achievement_count, [(10,5.0),(7,4.0),(5,3.0),(3,2.0),(1,1.0)])
 
-    grammar_penalty = grammar_results.get('penalty_applied', 0.0)
-    score += max(0.0, 10.0 - grammar_penalty / 2.0)
+    grammar_checked = (
+        grammar_results.get('checked', False)
+        or grammar_results.get('_component_status') not in ('unavailable', None)
+    )
+    if grammar_checked:
+        grammar_penalty = grammar_results.get('penalty_applied', 0.0)
+        score += max(0.0, 10.0 - grammar_penalty / 2.0)
+    else:
+        # When grammar checking is unavailable, use neutral score (6.0) so resume is not falsely inflated or penalized
+        score += 6.0
 
     return min(25.0, max(0.0, score))
 
@@ -301,6 +375,7 @@ def calculate_overall_score(
     location_results: Dict,
     jd_keywords: Optional[List[str]] = None,
     experience_months: int = 0,
+    config: ATSScoringConfig = DEFAULT_SCORING_CONFIG,
 ) -> Dict:
 
     formatting_score        = _calc_formatting_score(parsed_resume, text)
@@ -309,24 +384,21 @@ def calculate_overall_score(
     skill_validation_score  = _calc_skill_validation_score(skill_validation_results)
     ats_compatibility_score = _calc_ats_compatibility_score(text, location_results, parsed_resume)
 
-    COMPONENT_MAX = {
-        'formatting': 20.0, 'keywords': 25.0, 'content': 25.0,
-        'skill_validation': 15.0, 'ats_compatibility': 15.0,
-    }
-
-    formatting_pct        = (formatting_score        / COMPONENT_MAX['formatting'])        * 100.0
-    keywords_pct          = (keywords_score          / COMPONENT_MAX['keywords'])          * 100.0
-    content_pct           = (content_score           / COMPONENT_MAX['content'])           * 100.0
-    skill_validation_pct  = (skill_validation_score  / COMPONENT_MAX['skill_validation'])  * 100.0
-    ats_compatibility_pct = (ats_compatibility_score / COMPONENT_MAX['ats_compatibility']) * 100.0
+    c_max = config.component_max
+    formatting_pct        = (formatting_score        / c_max.formatting)        * 100.0
+    keywords_pct          = (keywords_score          / c_max.keywords)          * 100.0
+    content_pct           = (content_score           / c_max.content)           * 100.0
+    skill_validation_pct  = (skill_validation_score  / c_max.skill_validation)  * 100.0
+    ats_compatibility_pct = (ats_compatibility_score / c_max.ats_compatibility) * 100.0
 
     skills_keywords_pct = (keywords_pct * 0.6) + (skill_validation_pct * 0.4)
 
+    w = config.weights
     base_score = (
-        skills_keywords_pct   * 0.40 +
-        content_pct           * 0.30 +
-        formatting_pct        * 0.15 +
-        ats_compatibility_pct * 0.15
+        skills_keywords_pct   * w.skills_and_keywords +
+        content_pct           * w.content_quality +
+        formatting_pct        * w.formatting +
+        ats_compatibility_pct * w.ats_compatibility
     )
 
     penalties = {}
@@ -339,17 +411,22 @@ def calculate_overall_score(
     if location_results.get('penalty_applied', 0.0) > 0:
         penalties['location_privacy'] = location_results['penalty_applied']
 
+    val_adj = config.adjustments
     validation_pct = skill_validation_results.get('validation_percentage', 0.0)
-    if validation_pct >= 0.9:
-        bonuses['excellent_skill_validation'] = 2.0
-        score += 2.0
-    elif validation_pct >= 0.8:
-        bonuses['good_skill_validation'] = 1.0
-        score += 1.0
+    if validation_pct >= val_adj.excellent_validation_pct_threshold:
+        bonuses['excellent_skill_validation'] = val_adj.excellent_validation_bonus
+        score += val_adj.excellent_validation_bonus
+    elif validation_pct >= val_adj.good_validation_pct_threshold:
+        bonuses['good_skill_validation'] = val_adj.good_validation_bonus
+        score += val_adj.good_validation_bonus
 
-    if grammar_results.get('total_errors', 0) == 0:
-        bonuses['perfect_grammar'] = 1.0
-        score += 1.0
+    grammar_checked = (
+        grammar_results.get('checked', False)
+        or grammar_results.get('_component_status') not in ('unavailable', None)
+    )
+    if grammar_checked and grammar_results.get('total_errors', 0) == 0:
+        bonuses['perfect_grammar'] = val_adj.perfect_grammar_bonus
+        score += val_adj.perfect_grammar_bonus
 
     if jd_keywords and len(jd_keywords) > 0:
         all_resume_terms = list(set((keywords or []) + (skills or [])))
@@ -400,7 +477,7 @@ def generate_strengths(
         strengths.append(f' {pct:.0f}% of skills are validated by projects')
     if score_results['ats_compatibility_score'] >= 13:
         strengths.append(' Excellent ATS compatibility with clean formatting')
-    if grammar_results.get('total_errors', 0)   == 0:
+    if grammar_results.get('checked', False) and grammar_results.get('total_errors', 0) == 0:
         strengths.append(' Error-free grammar and spelling')
 
     if not strengths:
