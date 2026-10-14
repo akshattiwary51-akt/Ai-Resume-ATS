@@ -58,11 +58,25 @@ async def analyze_resume(
         resume_text, _metadata = parse_resume_file(file_bytes, filename)
         logger.info(f"Parsed '{filename}': {len(resume_text)} chars extracted")
 
-    except Exception as exc:
-        logger.error(f'File parsing failed: {exc}')
+    except FileValidationError as val_err:
+        user_msg = getattr(val_err, 'user_message', str(val_err))
+        logger.warning(f"File validation failed for '{filename}': {user_msg}")
+        raise HTTPException(
+            status_code=400,
+            detail=user_msg,
+        )
+    except FileParsingError as parse_err:
+        user_msg = getattr(parse_err, 'user_message', str(parse_err))
+        logger.warning(f"File parsing failed for '{filename}': {user_msg}")
         raise HTTPException(
             status_code=422,
-            detail=f'Could not read or parse the resume: {exc}',
+            detail=user_msg,
+        )
+    except Exception as exc:
+        logger.error(f'File parsing failed: {exc}', exc_info=True)
+        raise HTTPException(
+            status_code=422,
+            detail='Could not read or parse the resume. Please ensure it is a valid PDF, DOCX, or TXT file.',
         )
 
     #Full Analysis Pipeline 

@@ -1,31 +1,58 @@
-from PIL import EpsImagePlugin
+"""
+Resume Parser Service.
+
+Handles multi-format resume file validation and text extraction (PDF, DOCX, TXT).
+OCR-free native text extraction with resilient fallback logic (pypdf -> pdfplumber).
+"""
+
+from __future__ import annotations
+
 import io
-from typing import Optional, Tuple
+import logging
 from io import BytesIO
 from pathlib import Path
+from typing import Optional, Tuple
+import zipfile
+
+# Decoupled primary and fallback PDF extractor imports
+try:
+    from pypdf import PdfReader
+    import pypdf.errors as pypdf_errors
+    HAS_PYPDF = True
+except ImportError:
+    HAS_PYPDF = False
+    PdfReader = None
+    pypdf_errors = None
+
 try:
     import pdfplumber
-    from pypdf import PdfReader
     HAS_PDFPLUMBER = True
 except ImportError:
     HAS_PDFPLUMBER = False
-from docx import Document
-import PyPDF2
+    pdfplumber = None
+
+try:
+    from docx import Document
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
+    Document = None
 
 try:
     import magic
     HAS_MAGIC = True
 except Exception:
     HAS_MAGIC = False
+    magic = None
 
 from backend.utils.file_utils import (
-    FileParsingError, 
-    TextExtractionError, 
-    FileUploadError, 
-    log_error, 
-    log_warning, 
-    log_info, 
-    with_fallback
+    ATSBaseError,
+    FileParsingError,
+    TextExtractionError,
+    FileUploadError,
+    log_error,
+    log_warning,
+    log_info,
 )
 
 from backend.core.config import (
@@ -35,17 +62,110 @@ from backend.core.config import (
     SUPPORTED_MIME_TYPES,
 )
 
-class FileValidationError(Exception):
+logger = logging.getLogger('ats_resume_scorer')
+
+
+# ────────────────────────────────────────────────────────────────
+# Typed Exceptions
+# ────────────────────────────────────────────────────────────────
+
+class FileValidationError(ATSBaseError):
+    """Raised when file fails validation (size, extension, or type mismatch)."""
     pass
+
+
+class CorruptedPDFError(FileParsingError):
+    """Raised when a PDF is truncated, corrupted, or structurally invalid."""
+    def __init__(self, message: str = "Corrupted PDF", user_message: Optional[str] = None):
+        default_msg = "The PDF appears to be corrupted or incomplete. Please export or download it again."
+        super().__init__(message, user_message=user_message or default_msg)
+
+
+class PasswordProtectedPDFError(FileParsingError):
+    """Raised when a PDF is encrypted or password-protected."""
+    def __init__(self, message: str = "Password protected PDF", user_message: Optional[str] = None):
+        default_msg = "This PDF is password-protected. Please upload an unlocked PDF."
+        super().__init__(message, user_message=user_message or default_msg)
+
+
+class NoExtractableTextError(FileParsingError):
+    """Raised when a PDF contains no extractable selectable text."""
+    def __init__(self, message: str = "No extractable text", user_message: Optional[str] = None):
+        default_msg = "No selectable text was found in this PDF. Scanned/image-only resumes are not supported."
+        super().__init__(message, user_message=user_message or default_msg)
+
+
+# ────────────────────────────────────────────────────────────────
+# Content Sniffing and File Validation
+# ────────────────────────────────────────────────────────────────
+
+def _detect_file_type(file_data: bytes, filename: str) -> Optional[str]:
+    """
+    Detect actual file type using binary magic byte inspection with
+    python-magic as an optional assistant. Does not rely solely on extension.
+    """
+    if not file_data:
+        return None
+
+    # 1. Pure-Python Magic Byte Sniffing
+    # PDF signature: starts with %PDF-
+    if file_data.startswith(b'%PDF-'):
+        return 'pdf'
+
+    # DOCX signature: ZIP file starting with PK\x03\x04
+    if file_data.startswith(b'PK\x03\x04'):
+        try:
+            with io.BytesIO(file_data) as bio:
+                if zipfile.is_zipfile(bio):
+                    with zipfile.ZipFile(bio) as zf:
+                        names = zf.namelist()
+                        if any('word/' in n or '[Content_Types].xml' in n for n in names):
+                            return 'docx'
+        except Exception:
+            pass
+        # Fallback for valid zip with docx extension
+        if Path(filename).suffix.lower() == '.docx':
+            return 'docx'
+
+    # Legacy DOC: OLE2 compound document signature
+    if file_data.startswith(b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'):
+        return 'doc'
+
+    # 2. python-magic if available and operational
+    if HAS_MAGIC:
+        try:
+            mime = magic.from_buffer(file_data, mime=True)
+            if mime in SUPPORTED_MIME_TYPES:
+                return SUPPORTED_MIME_TYPES[mime]
+        except Exception:
+            pass
+
+    # 3. Plain Text (ASCII / UTF-8 decodable without null bytes)
+    sample = file_data[:4096]
+    if b'\x00' not in sample:
+        try:
+            sample.decode('utf-8')
+            return 'txt'
+        except UnicodeDecodeError:
+            try:
+                sample.decode('latin-1')
+                return 'txt'
+            except Exception:
+                pass
+
+    return None
 
 
 def validate_file(
     file_data: bytes,
     filename: str
 ) -> Tuple[bool, str, Optional[str]]:
+    """
+    Validate uploaded file size, empty status, extension allowlist,
+    and actual binary content type.
+    """
     # 1. Validate file size
     file_size_bytes = len(file_data)
-
     if file_size_bytes > MAX_FILE_SIZE_BYTES:
         size_mb = file_size_bytes / (1024 * 1024)
         return (
@@ -66,9 +186,8 @@ def validate_file(
             None,
         )
 
-    # 3. Validate filename extension
+    # 3. Validate filename extension against allowlist
     extension = Path(filename).suffix.lower()
-
     if extension not in SUPPORTED_EXTENSIONS:
         supported = ", ".join(sorted(SUPPORTED_EXTENSIONS)).upper()
         return (
@@ -80,207 +199,219 @@ def validate_file(
             None,
         )
 
-    # 4. Detect actual MIME type
-    try:
-        mime_type = magic.from_buffer(file_data, mime=True)
-    except Exception as e:
-        return False, f"Error determining file type: {e}", None
+    # 4. Detect actual binary file type
+    detected_type = _detect_file_type(file_data, filename)
 
-    # 5. Validate MIME type
-    if mime_type not in SUPPORTED_MIME_TYPES:
-        supported = ", ".join(
-            SUPPORTED_MIME_TYPES.keys()
-        ).upper()
-
+    if detected_type is None:
+        supported = ", ".join(sorted(SUPPORTED_EXTENSIONS)).upper()
         return (
             False,
             (
-                f"Unsupported file type: {mime_type}. "
-                f"Please upload one of: {supported}."
+                f"Could not verify file format of '{filename}'. "
+                f"Please ensure it is a valid document matching one of: {supported}."
             ),
             None,
         )
 
-    # 6. Return validated file type
-    file_type = SUPPORTED_MIME_TYPES[mime_type]
+    # 5. Guard against misleading extensions (e.g., text or exe renamed to .pdf)
+    expected_type = extension.lstrip('.')
+    if expected_type == 'pdf' and detected_type != 'pdf':
+        return (
+            False,
+            "File content does not match a valid PDF file. Please ensure it is not corrupted or renamed.",
+            None,
+        )
+    if expected_type == 'docx' and detected_type != 'docx':
+        return (
+            False,
+            "File content does not match a valid DOCX document.",
+            None,
+        )
 
-    return True, "", file_type
+    return True, "", detected_type
+
+
+# ────────────────────────────────────────────────────────────────
+# Text Quality Assessment
+# ────────────────────────────────────────────────────────────────
+
+def is_usable_text(text: str) -> bool:
+    """
+    Evaluate whether extracted text contains meaningful resume content.
+    Requires at least 50 non-whitespace characters and at least 30 alphabetic characters.
+    """
+    if not text or not isinstance(text, str):
+        return False
+
+    cleaned = " ".join(text.split())
+    if len(cleaned) < 50:
+        return False
+
+    alphabetic = sum(ch.isalpha() for ch in cleaned)
+    return alphabetic >= 30
+
+
+# ────────────────────────────────────────────────────────────────
+# PDF Text Extraction Pipeline
+# ────────────────────────────────────────────────────────────────
 
 def _extract_pdf_hyperlinks(file_data: bytes) -> str:
+    """Extract actionable web hyperlinks from PDF annotations without OCR."""
     urls = []
+    if not HAS_PYPDF:
+        return ""
     try:
-        reader = PyPDF2.PdfReader(io.BytesIO(file_data))
+        reader = PdfReader(io.BytesIO(file_data))
         for page in reader.pages:
-            if '/Annots' not in page:
-                continue
-            for annot_ref in page['/Annots']:
-                try:
-                    annot = annot_ref.get_object()
-                    if annot.get('/Subtype') != '/Link':
-                        continue
-                    action = annot.get('/A', {})
-                    uri = action.get('/URI', '')
-                    if uri and isinstance(uri, (str, bytes)):
-                        # PyPDF2 may return bytes for URI values
-                        if isinstance(uri, bytes):
+            try:
+                annots = page.get('/Annots')
+                if not annots:
+                    continue
+                for annot_ref in annots:
+                    try:
+                        annot = annot_ref.get_object()
+                        if annot.get('/Subtype') != '/Link':
+                            continue
+                        action = annot.get('/A', {})
+                        uri = action.get('/URI', '')
+                        if uri and isinstance(uri, bytes):
                             uri = uri.decode('utf-8', errors='ignore')
-                        uri = uri.strip()
+                        uri = str(uri).strip()
                         if uri.startswith('http'):
                             urls.append(uri)
-                except Exception:
-                    pass
+                    except Exception:
+                        continue
+            except Exception:
+                continue
     except Exception:
         pass
     return '\n'.join(urls)
 
 
-def _extract_pdf_with_pdfplumber(file_data: bytes) -> str:
-    if not HAS_PDFPLUMBER:
-        raise TextExtractionError(
-            'pdfplumber is not installed',
-            user_message='PDF extraction engine pdfplumber unavailable.'
-        )
-    text = ''
-    with pdfplumber.open(io.BytesIO(file_data)) as pdf:
-        for page in pdf.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + '\n'
-
-    if not text.strip():
-        raise TextExtractionError(
-            'pdfplumber extracted no text',
-            user_message='No text could be extracted from the PDF.'
-        )
-    
-    hyperlinks = _extract_pdf_hyperlinks(file_data)
-    if hyperlinks:
-        text = text.strip() + '\n' + hyperlinks
-
-    return text.strip()
-
-
-def _extract_pdf_with_pypdf2(file_data: bytes) -> str:
-    text = ''
-    pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_data))
-    for page in pdf_reader.pages:
-        page_text = page.extract_text()
-        if page_text:
-            text += page_text + '\n'
-
-    if not text.strip():
-        raise TextExtractionError(
-            'PyPDF2 extracted no text',
-            user_message='No text could be extracted from the PDF.'
-        )
-
-    hyperlinks = _extract_pdf_hyperlinks(file_data)
-    if hyperlinks:
-        text = text.strip() + '\n' + hyperlinks
-
-    return text.strip()
-
 def extract_text_from_pdf(file_data: bytes) -> str:
     """
     Extract text from a PDF without OCR.
 
-    Strategy:
-    1. Try pypdf.
-    2. If pypdf fails or produces insufficient text, try pdfplumber.
-    3. Reject the PDF only when neither extractor produces usable text.
+    Pipeline:
+    1. Validation of PDF header.
+    2. Primary extraction via pypdf.PdfReader.
+    3. Check for encryption / password-protection.
+    4. Text quality assessment via is_usable_text().
+    5. Fallback to pdfplumber if pypdf fails or produces insufficient text.
+    6. Assessment of fallback text.
+    7. Return usable text with hyperlinks or raise typed parsing error.
     """
-
-    # ==========================================================
-    # Strategy 1: pypdf
-    # ==========================================================
-    try:
-        reader = PdfReader(BytesIO(file_data))
-
-        pages_text = []
-
-        for page in reader.pages:
-            try:
-                page_text = page.extract_text() or ""
-
-                if page_text.strip():
-                    pages_text.append(page_text)
-
-            except Exception:
-                # One bad page should not prevent other pages
-                continue
-
-        extracted_text = "\n".join(pages_text).strip()
-
-        print(
-            f"[PDF] pypdf extracted {len(extracted_text)} characters"
+    if not file_data or not file_data.startswith(b'%PDF-'):
+        raise CorruptedPDFError(
+            "File is not a valid PDF document.",
+            user_message="The PDF appears to be corrupted or incomplete. Please export or download it again."
         )
 
-        if len(extracted_text) >= 50:
-            return extracted_text
-
-    except Exception as e:
-        print(
-            f"[PDF] pypdf failed: "
-            f"{type(e).__name__}: {e}"
-        )
+    is_encrypted_flag = False
+    pypdf_error_encountered = None
+    extracted_text = ""
 
     # ==========================================================
-    # Strategy 2: pdfplumber
+    # Strategy 1: pypdf (Primary Extractor)
     # ==========================================================
-    try:
-        pages_text = []
+    if HAS_PYPDF:
+        try:
+            reader = PdfReader(BytesIO(file_data))
 
-        with pdfplumber.open(BytesIO(file_data)) as pdf:
-            print(
-                f"[PDF] pdfplumber opened PDF "
-                f"with {len(pdf.pages)} page(s)"
-            )
-
-            for page_number, page in enumerate(pdf.pages, start=1):
+            if reader.is_encrypted:
+                is_encrypted_flag = True
                 try:
-                    page_text = page.extract_text() or ""
+                    # Attempt empty password decryption
+                    decrypt_res = reader.decrypt("")
+                    if decrypt_res == 0:
+                        raise PasswordProtectedPDFError()
+                except Exception:
+                    raise PasswordProtectedPDFError()
 
-                    print(
-                        f"[PDF] pdfplumber page {page_number}: "
-                        f"{len(page_text)} characters"
-                    )
+            pages_text = []
+            for page in reader.pages:
+                try:
+                    p_text = page.extract_text() or ""
+                    if p_text.strip():
+                        pages_text.append(p_text)
+                except Exception as page_err:
+                    log_warning(f"pypdf isolated page extraction failure: {page_err}", context="resume_parser")
+                    continue
 
-                    if page_text.strip():
-                        pages_text.append(page_text)
+            pypdf_result = "\n".join(pages_text).strip()
+            if is_usable_text(pypdf_result):
+                extracted_text = pypdf_result
+                log_info(f"pypdf extracted {len(extracted_text)} chars from {len(reader.pages)} page(s)", context="resume_parser")
 
-                except Exception as page_error:
-                    print(
-                        f"[PDF] pdfplumber page {page_number} failed: "
-                        f"{type(page_error).__name__}: {page_error}"
-                    )
+        except PasswordProtectedPDFError:
+            raise
+        except Exception as exc:
+            pypdf_error_encountered = exc
+            log_warning(f"pypdf primary extraction failed: {type(exc).__name__}: {exc}", context="resume_parser")
 
-        extracted_text = "\n".join(pages_text).strip()
-
-        print(
-            f"[PDF] pdfplumber extracted "
-            f"{len(extracted_text)} characters"
-        )
-
-        if len(extracted_text) >= 50:
-            return extracted_text
-
-    except Exception as e:
-        print(
-            f"[PDF] pdfplumber failed: "
-            f"{type(e).__name__}: {e}"
-        )
+    # If primary extraction succeeded with usable text, append links and return immediately
+    if extracted_text and is_usable_text(extracted_text):
+        links = _extract_pdf_hyperlinks(file_data)
+        if links:
+            extracted_text = extracted_text + "\n" + links
+        return extracted_text.strip()
 
     # ==========================================================
-    # No usable text
+    # Strategy 2: pdfplumber (Fallback Extractor)
     # ==========================================================
-    raise ValueError(
-        "Could not extract usable text from this PDF. "
-        "The PDF may be scanned/image-only, corrupted, "
-        "or password-protected. "
-        "Please upload a PDF containing selectable text."
-    )
-    
+    if HAS_PDFPLUMBER:
+        try:
+            pages_text = []
+            with pdfplumber.open(BytesIO(file_data)) as pdf:
+                for page_num, page in enumerate(pdf.pages, start=1):
+                    try:
+                        p_text = page.extract_text() or ""
+                        if p_text.strip():
+                            pages_text.append(p_text)
+                    except Exception as page_err:
+                        log_warning(f"pdfplumber isolated page {page_num} failure: {page_err}", context="resume_parser")
+                        continue
+
+            plumber_result = "\n".join(pages_text).strip()
+            if is_usable_text(plumber_result):
+                log_info(f"pdfplumber fallback extracted {len(plumber_result)} chars", context="resume_parser")
+                links = _extract_pdf_hyperlinks(file_data)
+                if links:
+                    plumber_result = plumber_result + "\n" + links
+                return plumber_result.strip()
+
+        except Exception as exc:
+            log_warning(f"pdfplumber fallback failed: {type(exc).__name__}: {exc}", context="resume_parser")
+
+    # ==========================================================
+    # Diagnostic Error Classification
+    # ==========================================================
+    if is_encrypted_flag:
+        raise PasswordProtectedPDFError()
+
+    if pypdf_error_encountered is not None:
+        err_str = str(pypdf_error_encountered).lower()
+        if "password" in err_str or "encrypted" in err_str:
+            raise PasswordProtectedPDFError()
+        if "truncated" in err_str or "eof" in err_str or "stream" in err_str:
+            raise CorruptedPDFError()
+
+    # If neither extractor raised an exception but no usable text was found
+    raise NoExtractableTextError()
+
+
+# ────────────────────────────────────────────────────────────────
+# DOCX and TXT Extraction
+# ────────────────────────────────────────────────────────────────
+
 def extract_text_from_docx(file_data: bytes) -> str:
+    """Extract text and hyperlinks from a modern .docx file."""
+    if not HAS_DOCX:
+        raise TextExtractionError(
+            "python-docx is not installed",
+            user_message="DOCX extraction engine unavailable on server."
+        )
+
     try:
         doc = Document(io.BytesIO(file_data))
         text_parts = []
@@ -295,14 +426,15 @@ def extract_text_from_docx(file_data: bytes) -> str:
                     if cell.text.strip():
                         text_parts.append(cell.text)
 
-        text = '\n'.join(text_parts)
+        text = '\n'.join(text_parts).strip()
 
-        if not text.strip():
+        if not text:
             raise FileParsingError(
-                'No text could be extracted from the document. '
-                'The document may be empty or corrupted.'
+                'No text could be extracted from the document. The document may be empty or corrupted.',
+                user_message='No text could be extracted from this DOCX document.'
             )
-        
+
+        # Extract hyperlinks
         try:
             for rel in doc.part.rels.values():
                 if 'hyperlink' in rel.reltype.lower():
@@ -313,26 +445,28 @@ def extract_text_from_docx(file_data: bytes) -> str:
             pass
 
         log_info(f'Extracted {len(text)} chars from DOCX', context='resume_parser')
-        return text.strip()
+        return text
 
     except FileParsingError:
-        raise   # Re-raise unchanged — don't wrap in another FileParsingError
-
-    except Exception as e:
-        log_error(
-            f"{type(e).__name__}: {e}",
-            context='parse_resume_file_extraction'
-        )
         raise
+    except Exception as e:
+        log_error(e, context='extract_text_from_docx')
+        raise FileParsingError(
+            f'Failed to extract text from DOCX: {e}',
+            user_message='The DOCX file appears to be corrupted. Please export or save it again.'
+        ) from e
+
 
 def extract_text_from_doc(file_data: bytes) -> str:
+    """Reject legacy .doc with helpful guidance."""
     raise FileParsingError(
-        'Legacy .doc format is not supported. '
-        'Please convert your document to .docx or .pdf and try again. '
-        'You can convert using Microsoft Word, Google Docs, or online tools.'
+        'Legacy .doc format is not supported. Please convert your document to .docx or .pdf and try again.',
+        user_message='Legacy .doc format is not supported. Please convert your document to .docx or .pdf and try again.'
     )
 
+
 def extract_text(file_data: bytes, file_type: str) -> str:
+    """Route file to appropriate text extractor."""
     if file_type == 'pdf':
         return extract_text_from_pdf(file_data)
     elif file_type == 'docx':
@@ -340,74 +474,47 @@ def extract_text(file_data: bytes, file_type: str) -> str:
     elif file_type == 'doc':
         return extract_text_from_doc(file_data)
     elif file_type == 'txt':
-        return file_data.decode('utf-8', errors='replace').strip()
+        try:
+            return file_data.decode('utf-8').strip()
+        except UnicodeDecodeError:
+            return file_data.decode('latin-1', errors='replace').strip()
     else:
         raise FileValidationError(
             f'Invalid file type: {file_type}. Supported types are: pdf, docx, txt, and doc.'
         )
-    
-def parse_resume_file(file_data: bytes, filename:str)->Tuple[str, dict]:
-    log_info(f'parsing file :{filename}', context='parse_Resume_file')
 
-    #phase01:validate file
+
+def parse_resume_file(file_data: bytes, filename: str) -> Tuple[str, dict]:
+    """
+    Validate and extract text from an uploaded resume file.
+    Returns (extracted_text, metadata_dict).
+    """
+    log_info(f'Validating and parsing file: {filename}', context='resume_parser')
+
+    # Phase 1: Validate file
+    is_valid, error_msg, file_type = validate_file(file_data, filename)
+    if not is_valid:
+        log_warning(f'Validation failed for file {filename}: {error_msg}', context='resume_parser')
+        raise FileValidationError(error_msg, user_message=error_msg)
+
+    # Phase 2: Extract text
     try:
-        is_valid, error_msg, file_type=validate_file(file_data, filename)
-        if not is_valid:
-            log_warning(f'valiudation failed for file {filename}', context='parse_resume_file')
-            raise FileValidationError(error_msg)
-    
-    except FileValidationError as e:
-        raise 
-
+        text = extract_text(file_data, file_type)  # type: ignore[arg-type]
+        log_info(f'Extracted {len(text)} chars from {filename}', context='resume_parser')
+    except (FileValidationError, FileParsingError):
+        raise
     except Exception as e:
-        log_error(e, context='parse_resume_file_validation')
-        raise FileValidationError(
-            'Could not validate the uploaded file. Please ensure it is a valid PDF or DOCX.'
-        ) from e
-    
-    #phase02: extraction of file
-
-    try:
-        text = extract_text(file_data, file_type)
-        log_info(f'Extracted {len(text)} chars from {filename}', context='parse_resume_file')
-
-    except FileParsingError:
-        raise   # Re-raise unchanged
-
-    except Exception as e:
-        import traceback
-
-        print("\n========== RESUME PARSER ERROR ==========")
-        print(f"Exception type: {type(e).__name__}")
-        print(f"Exception message: {e}")
-        traceback.print_exc()
-        print("=========================================\n")
-
-        log_error(e, context='parse_resume_file_extraction')
-
+        log_error(e, context='resume_parser_extraction')
         raise FileParsingError(
-            f'Failed to extract text from the resume: '
-            f'{type(e).__name__}: {e}'
+            f'Failed to extract text from the resume: {e}',
+            user_message='Could not extract readable text from your resume file.'
         ) from e
 
     metadata = {
-        'filename':        filename,
-        'file_type':       file_type,
+        'filename': filename,
+        'file_type': file_type,
         'file_size_bytes': len(file_data),
-        'text_length':     len(text),
-        'success':         True,
+        'text_length': len(text),
+        'success': True,
     }
     return text, metadata
-
-def is_usable_text(text: str) -> bool:
-    if not text:
-        return False
-
-    cleaned = " ".join(text.split())
-
-    if len(cleaned) < 50:
-        return False
-
-    alphabetic = sum(ch.isalpha() for ch in cleaned)
-
-    return alphabetic >= 30

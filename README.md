@@ -96,12 +96,37 @@ streamlit run frontend/streamlit_app.py
 
 The app opens at `http://localhost:8501`.
 
-### 6. Run the test suite
+## Resume File Support & PDF Extraction Strategy
 
-Run the automated pytest suite:
+### Supported Formats
+- **PDF (`.pdf`)**: Native text extraction with multi-extractor fallback.
+- **Word Document (`.docx`)**: Structured paragraph, table, and hyperlink extraction via `python-docx`.
+- **Plain Text (`.txt`)**: UTF-8 and Latin-1 decodable text.
+- **Legacy Word (`.doc`)**: Not supported. Users are guided to convert `.doc` files to `.docx` or `.pdf`.
 
+### PDF Extraction Pipeline (Strictly OCR-Free)
+To ensure fast, privacy-preserving, and lightweight execution, this platform operates **100% OCR-free**:
+1. **Validation**: Binary magic bytes and file size are validated before processing.
+2. **Primary Extraction (`pypdf`)**: Extracts selectable text and hyperlinks page-by-page. If an individual page encounters an isolated error, processing continues for remaining pages.
+3. **Quality Check (`is_usable_text`)**: The extracted text must contain at least 50 non-whitespace characters and 30 alphabetic characters to ensure meaningful resume content.
+4. **Fallback (`pdfplumber`)**: If `pypdf` raises an error, encounters a damaged stream, or extracts insufficient text, the pipeline falls back to `pdfplumber`.
+5. **No-OCR Policy**: If neither extractor finds usable text, a `NoExtractableTextError` is returned:
+   > *"No selectable text was found in this PDF. Scanned/image-only resumes are not supported."*
+
+### Troubleshooting & Export Guidance
+- **Scanned or Image-only PDFs**: Export your resume directly from your word processor (e.g., Google Docs, Microsoft Word, Canva, or LaTeX) by choosing **File → Download / Export as PDF** rather than scanning a physical printout.
+- **Password-Protected PDFs**: Unlocked PDFs are required. Remove passwords before uploading.
+- **Corrupted / Truncated PDFs**: Re-download or re-export the PDF to ensure the stream header and trailer are intact.
+
+### Running Automated Tests
+Run the entire offline test suite:
 ```bash
-pytest tests -v
+python -m pytest tests -v
+```
+
+Run focused parser and API tests:
+```bash
+python -m pytest tests/test_resume_parser.py tests/test_api.py -v
 ```
 
 ## Notes for students & developers
@@ -110,4 +135,4 @@ pytest tests -v
 - **Deterministic fallback mode:** If you don't have a Groq API key configured yet, the platform automatically switches to its deterministic regex & NLP parser.
 - **Local Dev / Guest Mode:** When testing locally without Supabase configured, the platform runs in `DEV_MODE=true` allowing instant testing in guest mode.
 - The first run downloads the Sentence Transformer model (~80 MB) if enabled; it is cached afterwards.
-- `docs/ARCHITECTURE.md` and `docs/UPGRADE_PLAN.md` document the full architecture, bug audit, and roadmap.
+- `docs/PHASE_1_AUDIT.md`, `docs/ARCHITECTURE.md`, and `docs/UPGRADE_PLAN.md` document the full architecture, bug audit, and roadmap.
