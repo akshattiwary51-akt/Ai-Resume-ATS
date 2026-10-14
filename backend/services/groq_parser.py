@@ -10,6 +10,8 @@ import json
 import logging
 from typing import Dict, List, Optional
 
+from backend.services.section_detector import detect_sections, DetectedSections
+
 logger = logging.getLogger('ats_resume_scorer')
 
 # ── LLM Client ──
@@ -152,33 +154,9 @@ def _try_parse_json(text: str) -> Optional[dict]:
 
 # ── Deterministic Fallback Parser ──
 
-# Common section headings found in resumes
-_SECTION_PATTERNS = {
-    'experience': re.compile(
-        r'^(?:work\s+)?experience|employment|work\s+history|professional\s+experience',
-        re.IGNORECASE
-    ),
-    'education': re.compile(
-        r'^education|academic|qualifications|degrees?',
-        re.IGNORECASE
-    ),
-    'skills': re.compile(
-        r'^(?:technical\s+)?skills|technologies|competenc|tools\s+(?:and|&)',
-        re.IGNORECASE
-    ),
-    'projects': re.compile(
-        r'^projects?|personal\s+projects?|academic\s+projects?',
-        re.IGNORECASE
-    ),
-    'summary': re.compile(
-        r'^(?:professional\s+)?summary|(?:career\s+)?objective|about\s+me|profile',
-        re.IGNORECASE
-    ),
-    'certifications': re.compile(
-        r'^certifications?|licenses?|credentials?',
-        re.IGNORECASE
-    ),
-}
+# Section detection is now handled by backend.services.section_detector.
+# The old _SECTION_PATTERNS dict and _detect_sections() are replaced by
+# detect_sections() from that module for better heading normalisation.
 
 # Contact info extraction patterns
 _EMAIL_RE = re.compile(r'[\w.+-]+@[\w-]+\.[\w.-]+')
@@ -200,31 +178,19 @@ _ACTION_VERBS = {
 
 
 def _detect_sections(text: str) -> Dict[str, str]:
-    """Split resume text into named sections based on heading patterns."""
-    lines = text.split('\n')
-    sections: Dict[str, List[str]] = {}
-    current_section = 'header'
-    sections[current_section] = []
+    """Split resume text into named sections based on heading patterns.
 
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            sections.setdefault(current_section, []).append(line)
-            continue
-
-        # Check if line matches a section heading
-        matched = False
-        for section_name, pattern in _SECTION_PATTERNS.items():
-            if pattern.search(stripped) and len(stripped) < 60:
-                current_section = section_name
-                sections.setdefault(current_section, [])
-                matched = True
-                break
-
-        if not matched:
-            sections.setdefault(current_section, []).append(line)
-
-    return {k: '\n'.join(v).strip() for k, v in sections.items() if v}
+    This is a thin wrapper kept for backward compatibility.
+    Internally delegates to :func:`backend.services.section_detector.detect_sections`.
+    """
+    detected = detect_sections(text)
+    # Return format expected by callers: canonical_name → body text.
+    # Include 'header' for compatibility with existing code.
+    result: Dict[str, str] = {}
+    if detected.header:
+        result['header'] = detected.header
+    result.update(detected.sections)
+    return result
 
 
 def _extract_skills_deterministic(text: str) -> List[str]:
@@ -299,10 +265,11 @@ def parse_resume_deterministic(raw_text: str) -> Dict:
     Deterministic resume parser — no LLM required.
     Uses regex, section detection, and pattern matching.
     """
-    sections = _detect_sections(raw_text)
+    detected = detect_sections(raw_text)
+    sections = detected.sections
 
     # Contact info from header or full text
-    header = sections.get('header', raw_text[:500])
+    header = detected.header or raw_text[:500]
 
     email_match = _EMAIL_RE.search(header) or _EMAIL_RE.search(raw_text[:1000])
     phone_match = _PHONE_RE.search(header) or _PHONE_RE.search(raw_text[:1000])
@@ -339,6 +306,7 @@ def parse_resume_deterministic(raw_text: str) -> Dict:
         'action_verbs': action_verbs,
         'keywords': keywords,
         '_parsed_by': 'deterministic',
+        '_detected_sections': detected,
     }
 
     return result
@@ -432,13 +400,23 @@ def parse_resume(raw_text: str) -> Dict:
     1. Try LLM parsing (Groq) if available
     2. Fall back to deterministic parsing if LLM unavailable or fails
     3. Merge: use deterministic extraction to fill gaps in LLM output
+
+    Every code path attaches ``_detected_sections`` (a :class:`DetectedSections`
+    object) so downstream code can reason about which sections the text
+    actually contains — independent of how the LLM parsed fields.
     """
+    # Always run deterministic section detection so that
+    # missing-section recommendations are based on what the text
+    # actually contains, not on whether the LLM populated a field.
+    detected = detect_sections(raw_text)
+
     client = _get_client()
 
     # If no LLM available, use deterministic parser
     if client is None:
         logger.info('No LLM API key configured — using deterministic resume parser')
         result = parse_resume_deterministic(raw_text)
+        result['_detected_sections'] = detected
         return _validate_resume_result(result)
 
     # Try LLM parsing
@@ -450,6 +428,7 @@ def parse_resume(raw_text: str) -> Dict:
         # FIX: Original had inverted logic (if result is None → validate None)
         if result is not None:
             result['_parsed_by'] = 'llm'
+            result['_detected_sections'] = detected
             return _validate_resume_result(result)
 
         # First attempt failed — retry with stricter prompt
@@ -463,18 +442,21 @@ def parse_resume(raw_text: str) -> Dict:
         result = _try_parse_json(raw_response)
         if result is not None:
             result['_parsed_by'] = 'llm_retry'
+            result['_detected_sections'] = detected
             return _validate_resume_result(result)
 
         # LLM failed both attempts — fall back to deterministic
         logger.warning('Groq returned unparseable JSON after retry — falling back to deterministic parser')
         result = parse_resume_deterministic(raw_text)
         result['_parsed_by'] = 'deterministic_fallback'
+        result['_detected_sections'] = detected
         return _validate_resume_result(result)
 
     except Exception as exc:
         logger.warning(f'LLM resume parsing failed: {exc} — falling back to deterministic parser')
         result = parse_resume_deterministic(raw_text)
         result['_parsed_by'] = 'deterministic_fallback'
+        result['_detected_sections'] = detected
         return _validate_resume_result(result)
 
 

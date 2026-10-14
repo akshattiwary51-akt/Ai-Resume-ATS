@@ -6,6 +6,7 @@ and generates actionable, evidence-based improvement suggestions.
 import re
 from typing import List, Dict, Any, Optional
 from backend.models.schemas import IssueDetail
+from backend.services.section_detector import DetectedSections
 
 def analyze_issues(
         resume_text: str, 
@@ -15,7 +16,8 @@ def analyze_issues(
         action_verbs: List[str], 
         skill_validation: Dict, 
         scores: Dict, 
-        contact_info: Optional[Dict]=None, 
+        contact_info: Optional[Dict]=None,
+        detected_sections: Optional[DetectedSections]=None,
 ) -> List[IssueDetail]:
     
     detected: List[IssueDetail]=[]
@@ -30,158 +32,178 @@ def analyze_issues(
     #Build a combined experience text for regex-based checks that still need text
     experience_text = '\n'.join(e.get('description', '') for e in exp_entries).strip()
 
+    # ── Helper: check if a section was found by the section detector ──
+    # When detected_sections is available we trust it over keyword heuristics.
+    # This ensures we never mark a section as missing when the parser has
+    # confidently identified it.
+    def _section_present(canonical_name: str) -> bool:
+        """Return True if *canonical_name* was detected via heading matching."""
+        if detected_sections is not None:
+            return detected_sections.has_section(canonical_name)
+        return False
 
-    #1. missig project section
-    resume_lower = resume_text.lower()
-    has_projects_signal = any(kw in resume_lower for kw in [
-        'project', 'github.com', 'deployed', 'built a', 'developed a',
-        'created a', 'implemented a', 'live demo', 'tech stack',
-    ])
 
-    if not proj_entries and len(projects) == 0 and not has_projects_signal:
-        detected.append(IssueDetail(
-            issue_title="Missing Projects Section",
-            severity_level="High",
-            ats_impact="High",
-            explanation=(
-                "Your resume does not have a dedicated Projects section. "
-                "ATS systems and recruiters look for concrete projects to validate "
-                "that your listed skills have been applied in practice."
-            ),
+    #1. missing project section
+    # Skip this issue if the section detector found a Projects heading.
+    if not _section_present('projects'):
+        resume_lower = resume_text.lower()
+        has_projects_signal = any(kw in resume_lower for kw in [
+            'project', 'github.com', 'deployed', 'built a', 'developed a',
+            'created a', 'implemented a', 'live demo', 'tech stack',
+        ])
 
-            where_it_appears="Resume structure — no 'Projects' header was detected",
+        if not proj_entries and len(projects) == 0 and not has_projects_signal:
+            detected.append(IssueDetail(
+                issue_title="Missing Projects Section",
+                severity_level="High",
+                ats_impact="High",
+                explanation=(
+                    "Your resume does not have a dedicated Projects section. "
+                    "ATS systems and recruiters look for concrete projects to validate "
+                    "that your listed skills have been applied in practice."
+                ),
 
-            how_to_fix=(
-                "Add a 'Projects' section with 2–3 significant projects. "
-                "For each project, include the title, technologies used, "
-                "what you built, and a measurable outcome."
-            ),
+                where_it_appears="Resume structure — no 'Projects' header was detected",
 
-            action_items=[
-                "Add a 'PROJECTS' section heading after your Experience section",
-                "Include 2–3 projects (personal, academic, or open-source)",
-                "For each project: write the title, tech stack used, what you built, and a measurable result",
-                "Example: 'E-Commerce Platform — React, Node.js, MongoDB. Handled 500+ transactions/month'",
-                "Link to GitHub or a live demo if available (e.g., github.com/yourname/project)",
-            ],
+                how_to_fix=(
+                    "Add a 'Projects' section with 2–3 significant projects. "
+                    "For each project, include the title, technologies used, "
+                    "what you built, and a measurable outcome."
+                ),
 
-            example_improvement=(
-                "Add:\n"
-                "PROJECTS\n"
-                "• E-Commerce Platform — Built a full-stack shopping site using "
-                "React, Node.js, and MongoDB. Implemented payment processing with "
-                "Stripe, handling 500+ transactions/month.\n"
-                "• ML Sentiment Analyzer — Trained a BERT model on 10K reviews "
-                "achieving 92% accuracy. Deployed as a REST API with FastAPI."
-            ),
-        ))
+                action_items=[
+                    "Add a 'PROJECTS' section heading after your Experience section",
+                    "Include 2–3 projects (personal, academic, or open-source)",
+                    "For each project: write the title, tech stack used, what you built, and a measurable result",
+                    "Example: 'E-Commerce Platform — React, Node.js, MongoDB. Handled 500+ transactions/month'",
+                    "Link to GitHub or a live demo if available (e.g., github.com/yourname/project)",
+                ],
+
+                example_improvement=(
+                    "Add:\n"
+                    "PROJECTS\n"
+                    "• E-Commerce Platform — Built a full-stack shopping site using "
+                    "React, Node.js, and MongoDB. Implemented payment processing with "
+                    "Stripe, handling 500+ transactions/month.\n"
+                    "• ML Sentiment Analyzer — Trained a BERT model on 10K reviews "
+                    "achieving 92% accuracy. Deployed as a REST API with FastAPI."
+                ),
+            ))
 
     #2. missing experience section
-    has_experience_signal = any(kw in resume_lower for kw in [
-        'intern', 'internship', 'employed', 'worked at', 'working at',
-        'company', 'organization', 'job', 'role', 'position', 'designation',
-        'manager', 'engineer', 'developer', 'analyst', 'consultant',
-    ])
+    # Skip if the section detector found an Experience heading.
+    if not _section_present('experience'):
+        resume_lower = resume_text.lower()
+        has_experience_signal = any(kw in resume_lower for kw in [
+            'intern', 'internship', 'employed', 'worked at', 'working at',
+            'company', 'organization', 'job', 'role', 'position', 'designation',
+            'manager', 'engineer', 'developer', 'analyst', 'consultant',
+        ])
 
-    if not exp_entries and not has_experience_signal:
-        detected.append(IssueDetail(
-            issue_title="Missing Work Experience Section",
-            severity_level="High",
-            ats_impact="High",
-            explanation=(
-                "No work experience section was detected. Even for freshers, "
-                "internships, freelance work, or volunteer experience help "
-                "demonstrate professional capability."
-            ),
-            where_it_appears="Resume structure — no 'Experience' or 'Work History' header found",
-            how_to_fix=(
-                "Add an 'Experience' section. If you lack formal employment, "
-                "include internships, freelance projects, open-source contributions, "
-                "or relevant volunteer work."
-            ),
-            action_items=[
-                "Add an 'EXPERIENCE' or 'INTERNSHIPS' section to your resume",
-                "List each role with: Job Title — Company Name (Month Year – Month Year)",
-                "Add 2–4 bullet points per role describing what you did and its impact",
-                "If no formal job: include internships, freelance work, open-source, or college clubs",
-                "Start every bullet with a past-tense action verb (Developed, Built, Led, etc.)",
-            ],
-            example_improvement=(
-                "Add:\n"
-                "EXPERIENCE\n"
-                "Software Engineering Intern — XYZ Corp (Jun 2025 – Aug 2025)\n"
-                "• Developed REST APIs with FastAPI serving 10K requests/day\n"
-                "• Reduced page load time by 40% through caching optimization"
-            ),
-        ))
+        if not exp_entries and not has_experience_signal:
+            detected.append(IssueDetail(
+                issue_title="Missing Work Experience Section",
+                severity_level="High",
+                ats_impact="High",
+                explanation=(
+                    "No work experience section was detected. Even for freshers, "
+                    "internships, freelance work, or volunteer experience help "
+                    "demonstrate professional capability."
+                ),
+                where_it_appears="Resume structure — no 'Experience' or 'Work History' header found",
+                how_to_fix=(
+                    "Add an 'Experience' section. If you lack formal employment, "
+                    "include internships, freelance projects, open-source contributions, "
+                    "or relevant volunteer work."
+                ),
+                action_items=[
+                    "Add an 'EXPERIENCE' or 'INTERNSHIPS' section to your resume",
+                    "List each role with: Job Title — Company Name (Month Year – Month Year)",
+                    "Add 2–4 bullet points per role describing what you did and its impact",
+                    "If no formal job: include internships, freelance work, open-source, or college clubs",
+                    "Start every bullet with a past-tense action verb (Developed, Built, Led, etc.)",
+                ],
+                example_improvement=(
+                    "Add:\n"
+                    "EXPERIENCE\n"
+                    "Software Engineering Intern — XYZ Corp (Jun 2025 – Aug 2025)\n"
+                    "• Developed REST APIs with FastAPI serving 10K requests/day\n"
+                    "• Reduced page load time by 40% through caching optimization"
+                ),
+            ))
 
     #3. Missing Education Section 
-    has_education_signal = any(kw in resume_lower for kw in [
-        'b.tech', 'btech', 'b.e.', 'b.sc', 'bsc', 'm.tech', 'mtech', 'm.sc',
-        'bachelor', 'master', 'phd', 'university', 'college',
-        'institute of technology', 'cgpa', 'gpa', 'graduated', 'diploma',
-        'class of', '20', 'batch of',
-    ])
-    if not edu_entries and not has_education_signal:
-        detected.append(IssueDetail(
-            issue_title="Missing Education Section",
-            severity_level="Moderate",
-            ats_impact="Medium",
-            explanation=(
-                "No education section was found. Most ATS systems expect an "
-                "Education section with at least your degree and institution."
-            ),
-            where_it_appears="Resume structure — no 'Education' header detected",
-            how_to_fix=(
-                "Add an 'Education' section listing your degree, university, "
-                "graduation year, and optionally your GPA or relevant coursework."
-            ),
-            action_items=[
-                "Add an 'EDUCATION' section (usually at the bottom for experienced candidates, top for freshers)",
-                "Include: Degree name — Institution name (Start Year – End Year)",
-                "Add your CGPA or percentage if it is 7.0+ or 70%+",
-                "Optionally list 3–5 relevant courses (e.g., Data Structures, DBMS, ML)",
-            ],
-            example_improvement=(
-                "Add:\n"
-                "EDUCATION\n"
-                "B.Tech in Computer Science — IIT Delhi (2021–2025)\n"
-                "CGPA: 8.5 | Relevant Coursework: Data Structures, ML, DBMS"
-            ),
-        ))
+    # Skip if section detector found an Education heading.
+    if not _section_present('education'):
+        resume_lower = resume_text.lower()
+        has_education_signal = any(kw in resume_lower for kw in [
+            'b.tech', 'btech', 'b.e.', 'b.sc', 'bsc', 'm.tech', 'mtech', 'm.sc',
+            'bachelor', 'master', 'phd', 'university', 'college',
+            'institute of technology', 'cgpa', 'gpa', 'graduated', 'diploma',
+            'class of', '20', 'batch of',
+        ])
+        if not edu_entries and not has_education_signal:
+            detected.append(IssueDetail(
+                issue_title="Missing Education Section",
+                severity_level="Moderate",
+                ats_impact="Medium",
+                explanation=(
+                    "No education section was found. Most ATS systems expect an "
+                    "Education section with at least your degree and institution."
+                ),
+                where_it_appears="Resume structure — no 'Education' header detected",
+                how_to_fix=(
+                    "Add an 'Education' section listing your degree, university, "
+                    "graduation year, and optionally your GPA or relevant coursework."
+                ),
+                action_items=[
+                    "Add an 'EDUCATION' section (usually at the bottom for experienced candidates, top for freshers)",
+                    "Include: Degree name — Institution name (Start Year – End Year)",
+                    "Add your CGPA or percentage if it is 7.0+ or 70%+",
+                    "Optionally list 3–5 relevant courses (e.g., Data Structures, DBMS, ML)",
+                ],
+                example_improvement=(
+                    "Add:\n"
+                    "EDUCATION\n"
+                    "B.Tech in Computer Science — IIT Delhi (2021–2025)\n"
+                    "CGPA: 8.5 | Relevant Coursework: Data Structures, ML, DBMS"
+                ),
+            ))
 
-    #4. Missing Skills Section 
-    if not parsed_resume.get('skills') and len(skills) < 3:  # only flag if extraction also found very few skills
-        detected.append(IssueDetail(
-            issue_title="Missing or Weak Skills Section",
-            severity_level="High",
-            ats_impact="High",
-            explanation=(
-                f"Only {len(skills)} skill(s) were detected. ATS systems "
-                "rely heavily on keyword matching from a dedicated Skills section. "
-                "Without clear skills listed, your resume may fail automated filters."
-            ),
-            where_it_appears="Skills section — either missing or contains very few items",
-            how_to_fix=(
-                "Add a clear 'Skills' section organized by category. "
-                "Include programming languages, frameworks, tools, and soft skills "
-                "that match your target role."
-            ),
-            action_items=[
-                "Add a 'TECHNICAL SKILLS' or 'SKILLS' section",
-                "Organize by category: Languages, Frameworks, Tools, Databases, Cloud",
-                "List at least 10–15 skills relevant to your target role",
-                "Use the exact names that appear in job descriptions (e.g., 'React.js' not just 'React')",
-                "Include tools you use daily: Git, VS Code, Postman, Docker, etc.",
-            ],
-            example_improvement=(
-                "Add:\n"
-                "TECHNICAL SKILLS\n"
-                "Languages: Python, JavaScript, TypeScript, SQL\n"
-                "Frameworks: React, FastAPI, Django, Express.js\n"
-                "Tools: Docker, Git, AWS, PostgreSQL, MongoDB"
-            ),
-        ))
+    #4. Missing Skills Section
+    # Skip if section detector found a Skills heading.
+    if not _section_present('skills'):
+        if not parsed_resume.get('skills') and len(skills) < 3:  # only flag if extraction also found very few skills
+            detected.append(IssueDetail(
+                issue_title="Missing or Weak Skills Section",
+                severity_level="High",
+                ats_impact="High",
+                explanation=(
+                    f"Only {len(skills)} skill(s) were detected. ATS systems "
+                    "rely heavily on keyword matching from a dedicated Skills section. "
+                    "Without clear skills listed, your resume may fail automated filters."
+                ),
+                where_it_appears="Skills section — either missing or contains very few items",
+                how_to_fix=(
+                    "Add a clear 'Skills' section organized by category. "
+                    "Include programming languages, frameworks, tools, and soft skills "
+                    "that match your target role."
+                ),
+                action_items=[
+                    "Add a 'TECHNICAL SKILLS' or 'SKILLS' section",
+                    "Organize by category: Languages, Frameworks, Tools, Databases, Cloud",
+                    "List at least 10–15 skills relevant to your target role",
+                    "Use the exact names that appear in job descriptions (e.g., 'React.js' not just 'React')",
+                    "Include tools you use daily: Git, VS Code, Postman, Docker, etc.",
+                ],
+                example_improvement=(
+                    "Add:\n"
+                    "TECHNICAL SKILLS\n"
+                    "Languages: Python, JavaScript, TypeScript, SQL\n"
+                    "Frameworks: React, FastAPI, Django, Express.js\n"
+                    "Tools: Docker, Git, AWS, PostgreSQL, MongoDB"
+                ),
+            ))
 
     # 5. Skills Lack Supporting Evidence
     unvalidated = skill_validation.get('unvalidated_skills', [])
@@ -379,36 +401,38 @@ def analyze_issues(
         ))
 
     #10. Missing Summary/Objective
-    if not summary:
-        detected.append(IssueDetail(
-            issue_title="Missing Professional Summary",
-            severity_level="Low",
-            ats_impact="Low",
-            explanation=(
-                "Your resume does not include a Professional Summary or Objective "
-                "section at the top. While not required, a 2-3 line summary helps "
-                "recruiters quickly understand your profile and target role."
-            ),
-            where_it_appears="Top of resume — below contact info",
-            how_to_fix=(
-                "Add a 2-3 sentence summary highlighting your experience level, "
-                "key skills, and career focus. Tailor it to the job you're applying for."
-            ),
-            action_items=[
-                "Add a 'PROFESSIONAL SUMMARY' or 'OBJECTIVE' section at the top of your resume",
-                "Write 2–3 sentences: who you are, your key skills, and what role you seek",
-                "Mention your years of experience or education level upfront",
-                "Tailor this section for each job application — reference the specific role",
-                "Keep it under 60 words — recruiters spend only 6 seconds on first scan",
-            ],
-            example_improvement=(
-                "Add:\n"
-                "PROFESSIONAL SUMMARY\n"
-                "Full-stack developer with 2+ years of experience building scalable "
-                "web applications using React, Node.js, and AWS. Passionate about "
-                "clean architecture and performance optimization."
-            ),
-        ))
+    # Skip if section detector found a Summary heading.
+    if not _section_present('summary'):
+        if not summary:
+            detected.append(IssueDetail(
+                issue_title="Missing Professional Summary",
+                severity_level="Low",
+                ats_impact="Low",
+                explanation=(
+                    "Your resume does not include a Professional Summary or Objective "
+                    "section at the top. While not required, a 2-3 line summary helps "
+                    "recruiters quickly understand your profile and target role."
+                ),
+                where_it_appears="Top of resume — below contact info",
+                how_to_fix=(
+                    "Add a 2-3 sentence summary highlighting your experience level, "
+                    "key skills, and career focus. Tailor it to the job you're applying for."
+                ),
+                action_items=[
+                    "Add a 'PROFESSIONAL SUMMARY' or 'OBJECTIVE' section at the top of your resume",
+                    "Write 2–3 sentences: who you are, your key skills, and what role you seek",
+                    "Mention your years of experience or education level upfront",
+                    "Tailor this section for each job application — reference the specific role",
+                    "Keep it under 60 words — recruiters spend only 6 seconds on first scan",
+                ],
+                example_improvement=(
+                    "Add:\n"
+                    "PROFESSIONAL SUMMARY\n"
+                    "Full-stack developer with 2+ years of experience building scalable "
+                    "web applications using React, Node.js, and AWS. Passionate about "
+                    "clean architecture and performance optimization."
+                ),
+            ))
 
     return detected
 

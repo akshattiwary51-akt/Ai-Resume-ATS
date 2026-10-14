@@ -16,6 +16,7 @@ from backend.services.groq_parser import parse_resume, parse_job_description
 from backend.services.jd_matcher import compare_resume_with_jd
 from backend.services.feedback_engine import analyze_issues, generate_issues_summary
 from backend.services.ats_scorer import calculate_overall_score, validate_skills_with_projects
+from backend.services.section_detector import DetectedSections
 
 
 def analyze_full_resume(
@@ -102,6 +103,9 @@ def analyze_full_resume(
         jd_keywords=jd_keywords,
         experience_months=experience_months,
     )
+    # Extract the detected sections object (always present after Phase 2)
+    detected_sections: DetectedSections = parsed_resume.get('_detected_sections')  # type: ignore[assignment]
+
     detailed_feedback = analyze_issues(
         resume_text=resume_text,
         parsed_resume=parsed_resume,
@@ -111,17 +115,30 @@ def analyze_full_resume(
         skill_validation=skill_validation,
         scores=scores,
         contact_info=contact_info,
+        detected_sections=detected_sections,
     )
 
     issues_summary = generate_issues_summary(detailed_feedback)
 
-    # Generate prioritized recommendations
-    raw_sections = {
-        'experience': ' '.join(e.get('description', '') for e in parsed_resume.get('experience', []) if isinstance(e, dict)),
-        'education': ' '.join(str(e) for e in parsed_resume.get('education', []) if isinstance(e, dict)),
-        'skills': ' '.join(skills),
-        'summary': parsed_resume.get('professional_summary', ''),
-    }
+    # Build sections dict for recommendations — prefer detected sections
+    if detected_sections is not None:
+        raw_sections = {
+            'experience': detected_sections.get_section('experience', ''),
+            'education': detected_sections.get_section('education', ''),
+            'skills': detected_sections.get_section('skills', ''),
+            'summary': detected_sections.get_section('summary', ''),
+            'projects': detected_sections.get_section('projects', ''),
+            'certifications': detected_sections.get_section('certifications', ''),
+            'achievements': detected_sections.get_section('achievements', ''),
+        }
+    else:
+        # Fallback to old behaviour when _detected_sections is missing
+        raw_sections = {
+            'experience': ' '.join(e.get('description', '') for e in parsed_resume.get('experience', []) if isinstance(e, dict)),
+            'education': ' '.join(str(e) for e in parsed_resume.get('education', []) if isinstance(e, dict)),
+            'skills': ' '.join(skills),
+            'summary': parsed_resume.get('professional_summary', ''),
+        }
     recs_result = generate_all_recommendations(
         skill_validation_results=skill_validation,
         grammar_results=grammar_results,
@@ -129,6 +146,7 @@ def analyze_full_resume(
         score_results=scores,
         sections=raw_sections,
         resume_keywords=keywords,
+        detected_sections=detected_sections,
     )
     recommendations_list = format_recommendations_for_api(recs_result)
     recommendations_summary = get_recommendation_summary(recs_result)

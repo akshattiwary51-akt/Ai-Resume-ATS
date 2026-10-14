@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional
 
+from backend.services.section_detector import DetectedSections
+
 class Priority(Enum):
     CRITICAL='critical'
     HIGH='high'
@@ -262,6 +264,7 @@ def generate_keyword_recommendations(
 def generate_formatting_recommendations(
     score_results: Dict,
     sections: Dict[str, str],
+    detected_sections: Optional[DetectedSections] = None,
 ) -> List[Recommendation]:
     recommendations  = []
     formatting_score = score_results.get('formatting_score', 0.0)
@@ -276,6 +279,11 @@ def generate_formatting_recommendations(
 
     missing_sections = []
     for section_name, suggestion in section_recommendations.items():
+        # If the section detector confidently found this heading,
+        # never mark it as missing — even if the content is short or empty.
+        if detected_sections is not None and detected_sections.has_section(section_name):
+            continue
+
         content = sections.get(section_name, '')
         if not content or len(content) < 20:
             missing_sections.append((section_name, suggestion))
@@ -349,6 +357,7 @@ def generate_all_recommendations(
     sections: Dict[str, str],
     keyword_analysis: Optional[Dict] = None,
     resume_keywords: Optional[List[str]] = None,
+    detected_sections: Optional[DetectedSections] = None,
 ) -> Dict:
 
     all_recs = []
@@ -358,7 +367,7 @@ def generate_all_recommendations(
     all_recs.extend(generate_grammar_recommendations(grammar_results))
     all_recs.extend(generate_location_recommendations(location_results))
     all_recs.extend(generate_keyword_recommendations(keyword_analysis, resume_keywords))
-    all_recs.extend(generate_formatting_recommendations(score_results, sections))
+    all_recs.extend(generate_formatting_recommendations(score_results, sections, detected_sections))
 
     #Sort: critical first, highest impact within each tier
     prioritized = _prioritize_recommendations(all_recs)
