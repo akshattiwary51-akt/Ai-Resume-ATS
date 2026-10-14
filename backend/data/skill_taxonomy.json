@@ -1,0 +1,136 @@
+{
+  "programming_languages": {
+    "python": {"canonical": "Python", "aliases": ["python3", "py"]},
+    "javascript": {"canonical": "JavaScript", "aliases": ["js", "es6", "ecmascript", "vanilla js"]},
+    "typescript": {"canonical": "TypeScript", "aliases": ["ts"]},
+    "java": {"canonical": "Java", "aliases": ["java 8", "java 11", "java 17", "java 21", "core java"]},
+    "c++": {"canonical": "C++", "aliases": ["cpp", "c plus plus"]},
+    "c#": {"canonical": "C#", "aliases": ["c sharp", "csharp", ".net c#"]},
+    "golang": {"canonical": "Go", "aliases": ["golang", "go programming", "go language"]},
+    "rust": {"canonical": "Rust", "aliases": ["rust lang", "rustlang"]},
+    "ruby": {"canonical": "Ruby", "aliases": ["ruby on rails", "ror"]},
+    "php": {"canonical": "PHP", "aliases": ["php7", "php8", "modern php"]},
+    "swift": {"canonical": "Swift", "aliases": ["swift5", "swiftui"]},
+    "kotlin": {"canonical": "Kotlin", "aliases": ["kotlin/jvm"]},
+    "sql": {"canonical": "SQL", "aliases": ["structured query language", "t-sql", "pl/sql", "plsql"]},
+    "r": {"canonical": "R", "aliases": ["r programming", "r language", "r-project"]},
+    "scala": {"canonical": "Scala", "aliases": []},
+    "bash": {"canonical": "Bash / Shell Scripting", "aliases": ["shell script", "shell scripting", "bash script", "zsh", "powershell", "shell"]}
+  },
+  "frameworks_and_libraries": {
+    "react": {"canonical": "React", "aliases": ["react.js", "reactjs", "react native"]},
+    "next.js": {"canonical": "Next.js", "aliases": ["nextjs", "next"]},
+    "vue": {"canonical": "Vue.js", "aliases": ["vue.js", "vuejs", "vue3", "vue2"]},
+    "angular": {"canonical": "Angular", "aliases": ["angular.js", "angularjs", "angular 2+"]},
+    "svelte": {"canonical": "Svelte", "aliases": ["sveltekit"]},
+    "fastapi": {"canonical": "FastAPI", "aliases": ["fast-api"]},
+    "flask": {"canonical": "Flask", "aliases": ["flask microframework"]},
+    "django": {"canonical": "Django", "aliases": ["django rest framework", "drf"]},
+    "node.js": {"canonical": "Node.js", "aliases": ["nodejs", "node"]},
+    "express": {"canonical": "Express.js", "aliases": ["express.js", "expressjs"]},
+    "spring": {"canonical": "Spring Boot", "aliases": ["spring boot", "spring framework", "spring-boot"]},
+    "nest.js": {"canonical": "NestJS", "aliases": ["nestjs"]},
+    "asp.net": {"canonical": "ASP.NET Core", "aliases": ["asp.net core", ".net core", "dotnet core", ".net"]},
+    "tailwind": {"canonical": "Tailwind CSS", "aliases": ["tailwind css", "tailwindcss"]},
+    "bootstrap": {"canonical": "Bootstrap", "aliases": ["bootstrap 5", "bootstrap 4"]},
+    "graphql": {"canonical": "GraphQL", "aliases": ["apollo graphql"]},
+    "rest api": {"canonical": "REST API", "aliases": ["restful api", "rest apis", "restful web services", "rest web services"]}
+  },
+  "databases": {
+    "postgresql": {"canonical": "PostgreSQL", "aliases": ["postgres", "pgsql", "psql"]},
+    "mysql": {"canonical": "MySQL", "aliases": ["mariadb"]},
+    "mongodb": {"canonical": "MongoDB", "aliases": ["mongo", "nosql mongodb"]},
+    "redis": {"canonical": "Redis", "aliases": ["redis cache"]},
+    "elasticsearch": {"canonical": "Elasticsearch", "aliases": ["elastic search", "opensearch", "elk stack"]},
+    "sqlite": {"canonical": "SQLite", "aliases": ["sqlite3"]},
+    "dynamodb": {"canonical": "DynamoDB", "aliases": ["amazon dynamodb"]},
+    "cassandra": {"canonical": "Apache Cassandra", "aliases": ["cassandra"]},
+    "snowflake": {"canonical": "Snowflake", "aliases": ["snowflake data warehouse"]},
+    "oracle": {"canonical": "Oracle Database", "aliases": ["oracle db", "oracle sql"]},
+    "supabase": {"canonical": "Supabase", "aliases": []},
+    "firebase": {"canonical": "Firebase", "aliases": ["firestore"]}
+  },
+  "cloud_and_devops": {
+    "docker": {"canonical": "Docker", "aliases": ["dockerfile", "docker-compose", "containerization", "containers"]},
+    "kubernetes": {"canonical": "Kubernetes", "aliases": ["k8s", "k8-s"]},
+    "aws": {"canonical": "Amazon Web Services (AWS)", "aliases": ["amazon web services", "aws cloud", "aws ec2", "aws s3", "aws lambda", "aws ecs", "aws eks"]},
+    "gcp": {"canonical": "Google Cloud Platform (GCP)", "aliases": ["google cloud", "google cloud platform", "gcp cloud"]},
+    "azure": {"canonical": "Microsoft Azure", "aliases": ["azure cloud", "azure devops", "ms azure"]},
+    "terraform": {"canonical": "Terraform", "aliases": ["hashicorp terraform", "iac", "infrastructure as code"]},
+    "ansible": {"canonical": "Ansible", "aliases": []},
+    "ci/cd": {"canonical": "CI/CD", "aliases": ["continuous integration", "continuous deployment", "ci-cd", "cicd"]},
+    "jenkins": {"canonical": "Jenkins", "aliases": ["jenkins ci"]},
+    "github actions": {"canonical": "GitHub Actions", "aliases": ["gha", "gh actions"]},
+    "git": {"canonical": "Git", "aliases": ["github", "gitlab", "bitbucket", "version control"]},
+    "linux": {"canonical": "Linux", "aliases": ["ubuntu", "debian", "red hat", "redhat", "centos"]},
+    "kafka": {"canonical": "Apache Kafka", "aliases": ["kafka", "message queue", "event streaming", "rabbitmq"]}
+  },
+  "ai_and_machine_learning": {
+    "machine learning": {"canonical": "Machine Learning", "aliases": ["ml", "machine-learning"]},
+    "deep learning": {"canonical": "Deep Learning", "aliases": ["neural networks", "deep neural networks", "dl"]},
+    "nlp": {"canonical": "Natural Language Processing (NLP)", "aliases": ["natural language processing", "text mining", "large language models", "llm", "llms", "transformers", "huggingface", "spacy", "nltk"]},
+    "computer vision": {"canonical": "Computer Vision", "aliases": ["cv", "opencv", "image processing", "object detection"]},
+    "pytorch": {"canonical": "PyTorch", "aliases": ["torch"]},
+    "tensorflow": {"canonical": "TensorFlow", "aliases": ["tf", "keras"]},
+    "scikit-learn": {"canonical": "Scikit-Learn", "aliases": ["sklearn", "scikit learn"]},
+    "pandas": {"canonical": "Pandas", "aliases": []},
+    "numpy": {"canonical": "NumPy", "aliases": []},
+    "generative ai": {"canonical": "Generative AI", "aliases": ["genai", "prompt engineering", "langchain", "llamaindex", "rag", "retrieval augmented generation"]}
+  },
+  "data_analytics_and_bi": {
+    "power bi": {"canonical": "Power BI", "aliases": ["powerbi", "microsoft power bi"]},
+    "tableau": {"canonical": "Tableau", "aliases": ["tableau desktop", "tableau server"]},
+    "excel": {"canonical": "Microsoft Excel", "aliases": ["ms excel", "advanced excel", "excel vba", "vba", "pivot tables", "vlookup", "xlookup"]},
+    "data visualization": {"canonical": "Data Visualization", "aliases": ["data viz", "dataviz", "matplotlib", "seaborn", "dashboarding"]},
+    "business intelligence": {"canonical": "Business Intelligence (BI)", "aliases": ["bi", "bi tools", "bi reporting", "data warehousing", "dwh"]},
+    "etl": {"canonical": "ETL / Data Pipelines", "aliases": ["extract transform load", "etl pipelines", "data extraction", "data modeling", "data warehousing"]}
+  },
+  "software_engineering_tools": {
+    "jira": {"canonical": "Jira", "aliases": ["atlassian jira", "jira software"]},
+    "confluence": {"canonical": "Confluence", "aliases": ["atlassian confluence"]},
+    "postman": {"canonical": "Postman", "aliases": ["postman api"]},
+    "pytest": {"canonical": "Pytest", "aliases": ["python unittest", "unittest"]},
+    "jest": {"canonical": "Jest", "aliases": []},
+    "cypress": {"canonical": "Cypress", "aliases": ["cypress.io"]},
+    "selenium": {"canonical": "Selenium", "aliases": ["selenium webdriver"]},
+    "unit testing": {"canonical": "Unit Testing", "aliases": ["automated testing", "tdd", "test-driven development", "integration testing"]}
+  },
+  "finance_and_accounting": {
+    "financial modeling": {"canonical": "Financial Modeling", "aliases": ["financial models", "dcf modeling", "valuation modeling", "discounted cash flow"]},
+    "financial reporting": {"canonical": "Financial Reporting", "aliases": ["financial statements", "financial statement analysis", "gaap", "ifrs", "sec reporting", "balance sheet", "p&l", "income statement", "cash flow statement"]},
+    "budgeting": {"canonical": "Budgeting & Forecasting", "aliases": ["budget planning", "financial forecasting", "variance analysis", "annual budgeting", "fp&a"]},
+    "quickbooks": {"canonical": "QuickBooks", "aliases": ["quickbooks online", "qbo", "quickbooks desktop"]},
+    "general ledger": {"canonical": "General Ledger (GL)", "aliases": ["gl", "account reconciliation", "journal entries", "month-end close", "year-end close"]},
+    "accounts payable": {"canonical": "Accounts Payable (AP)", "aliases": ["ap", "invoice processing", "vendor management", "disbursements"]},
+    "accounts receivable": {"canonical": "Accounts Receivable (AR)", "aliases": ["ar", "billing", "collections", "cash applications"]},
+    "payroll": {"canonical": "Payroll Administration", "aliases": ["payroll processing", "adp", "gusto", "payroll tax", "payroll management"]},
+    "auditing": {"canonical": "Internal & External Auditing", "aliases": ["sox compliance", "sarbanes-oxley", "financial audit", "audit compliance", "internal controls"]},
+    "tax preparation": {"canonical": "Tax Preparation & Compliance", "aliases": ["tax filing", "corporate tax", "sales tax", "tax planning"]}
+  },
+  "business_operations": {
+    "process improvement": {"canonical": "Process Improvement", "aliases": ["six sigma", "lean six sigma", "kaizen", "operational excellence", "workflow optimization", "business process optimization"]},
+    "supply chain": {"canonical": "Supply Chain Management", "aliases": ["procurement", "inventory management", "logistics", "vendor relations", "sourcing"]},
+    "crm": {"canonical": "Customer Relationship Management (CRM)", "aliases": ["salesforce", "hubspot", "crm software", "customer relationship management"]},
+    "erp": {"canonical": "ERP Systems", "aliases": ["sap", "oracle netsuite", "netsuite", "enterprise resource planning", "microsoft dynamics"]},
+    "data analysis": {"canonical": "Data Analysis", "aliases": ["quantitative analysis", "statistical analysis", "trend analysis", "root cause analysis"]},
+    "risk management": {"canonical": "Risk Management", "aliases": ["compliance", "regulatory compliance", "operational risk", "risk assessment"]}
+  },
+  "office_productivity": {
+    "microsoft office": {"canonical": "Microsoft Office Suite", "aliases": ["ms office", "office 365", "microsoft 365"]},
+    "powerpoint": {"canonical": "Microsoft PowerPoint", "aliases": ["powerpoint", "ms powerpoint", "presentation design", "slide decks"]},
+    "google workspace": {"canonical": "Google Workspace", "aliases": ["g suite", "google docs", "google sheets", "google slides"]},
+    "word": {"canonical": "Microsoft Word", "aliases": ["ms word", "word processing"]}
+  },
+  "project_management": {
+    "project management": {"canonical": "Project Management", "aliases": ["pmp", "project planning", "scope management", "milestone tracking", "resource allocation"]},
+    "agile": {"canonical": "Agile Methodology", "aliases": ["scrum", "kanban", "sprint planning", "scrum master", "daily standups", "retrospectives"]},
+    "waterfall": {"canonical": "Waterfall Methodology", "aliases": ["sdlc waterfall"]},
+    "stakeholder management": {"canonical": "Stakeholder Management", "aliases": ["stakeholder engagement", "client relations", "cross-functional coordination"]}
+  },
+  "communication_and_leadership": {
+    "leadership": {"canonical": "Team Leadership", "aliases": ["people management", "mentoring", "coaching", "supervising", "team management"]},
+    "communication": {"canonical": "Written & Verbal Communication", "aliases": ["executive presentations", "technical writing", "interpersonal communication", "public speaking"]},
+    "negotiation": {"canonical": "Negotiation & Conflict Resolution", "aliases": ["contract negotiation", "conflict management", "vendor negotiations"]},
+    "strategic planning": {"canonical": "Strategic Planning", "aliases": ["business strategy", "roadmap planning", "vision setting"]}
+  }
+}

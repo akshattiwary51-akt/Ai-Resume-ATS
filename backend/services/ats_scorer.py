@@ -116,6 +116,9 @@ def _skill_matches(skill: str, text: str, embedder: Optional[object] = None, thr
     sim = _calculate_semantic_similarity(skill, text, embedder)
     return sim >= threshold, sim
 
+from backend.services.skill_validator import validate_skills_and_evidence
+
+
 # Skill validation
 def validate_skills_with_projects(
     skills: List[str],
@@ -124,7 +127,10 @@ def validate_skills_with_projects(
     embedder: Optional[object] = None,
     threshold: float = 0.6,
     config: ATSScoringConfig = DEFAULT_SCORING_CONFIG,
+    detected_sections: Optional[object] = None,
 ) -> Dict:
+    max_val_score = config.component_max.skill_validation
+
     if not skills:
         return {
             'validated_skills':      [],
@@ -132,52 +138,67 @@ def validate_skills_with_projects(
             'validation_percentage': 0.0,
             'skill_project_mapping': {},
             'validation_score':      0.0,
+            'skill_records':         [],
+            'category_counts':       {},
+            'status_counts':         {},
+            'warnings':              ["No skills provided for validation."],
         }
 
-    experience_text = ' '.join(
-        f"{e.get('job_title', '')} {e.get('company', '')} {e.get('description', '')}"
-        for e in experience_entries
-        if isinstance(e, dict)
-    ).strip()
+    # Extract structured sections if available
+    structured_sections: Dict[str, str] = {}
+    header_text = ""
+    if detected_sections is not None:
+        if hasattr(detected_sections, 'sections'):
+            structured_sections = dict(detected_sections.sections)
+        elif isinstance(detected_sections, dict):
+            structured_sections = dict(detected_sections)
+        if hasattr(detected_sections, 'header'):
+            header_text = detected_sections.header
 
-    # Pre-build list of project candidate targets: (display_name, search_text)
+    # Build fallback section texts if sections not already populated
+    if 'experience' not in structured_sections and experience_entries:
+        structured_sections['experience'] = '\n'.join(
+            f"{e.get('job_title', '')} {e.get('company', '')} {e.get('description', '')}"
+            for e in experience_entries
+            if isinstance(e, dict)
+        ).strip()
+
+    if 'projects' not in structured_sections and projects:
+        structured_sections['projects'] = '\n'.join(
+            f"{p.get('title', '')} {p.get('description', '')}"
+            for p in projects
+            if isinstance(p, dict)
+        ).strip()
+
+    if 'skills' not in structured_sections and skills:
+        structured_sections['skills'] = ', '.join(skills)
+
+    # Use multi-domain evidence validation
+    evidence_res = validate_skills_and_evidence(
+        skills_list=skills,
+        structured_sections=structured_sections,
+        projects=projects,
+        experience_entries=experience_entries,
+        header_text=header_text,
+    )
+
+    validated_skills = list(evidence_res['validated_skills'])
+    unvalidated_skills = list(evidence_res['unvalidated_skills'])
+    skill_project_mapping = dict(evidence_res['skill_project_mapping'])
+
+    # Vectorized batch semantic matching for remaining unvalidated skills if embedder is provided
     targets: List[Tuple[str, str]] = []
     for p in projects:
         t_text = f"{p.get('title', '')} {p.get('description', '')}".strip()
         if t_text:
             targets.append((p.get('title', 'Untitled Project'), t_text))
-    if experience_text:
-        targets.append(('Experience Section', experience_text))
+    exp_text = structured_sections.get('experience', '')
+    if exp_text:
+        targets.append(('Experience Section', exp_text))
 
-    validated_skills = []
-    unvalidated_skills = []
-    skill_project_mapping = {}
-    unmatched_skills = []
-
-    # Phase 1: Fast direct and alias containment matching (O(1) lookups)
-    for skill in skills:
-        norm_skill = normalize_skill_name(skill).lower()
-        skill_lower = skill.lower()
-        matched_targets = []
-        for name, text in targets:
-            text_lower = text.lower()
-            if skill_lower in text_lower or norm_skill in text_lower:
-                matched_targets.append(name)
-
-        if matched_targets:
-            validated_skills.append({
-                'skill': skill,
-                'projects': matched_targets,
-                'similarity': 1.0,
-            })
-            skill_project_mapping[skill] = matched_targets
-        else:
-            unmatched_skills.append(skill)
-
-    # Phase 2: Vectorized batch semantic matching for remaining skills
-    if unmatched_skills and targets and embedder is not None:
+    if unvalidated_skills and targets and embedder is not None:
         try:
-            skill_vecs = embedder.encode(unmatched_skills, convert_to_tensor=False)
+            skill_vecs = embedder.encode(unvalidated_skills, convert_to_tensor=False)
             target_vecs = embedder.encode([t[1][:1000] for t in targets], convert_to_tensor=False)
 
             skill_norms = np.linalg.norm(skill_vecs, axis=1, keepdims=True)
@@ -185,10 +206,10 @@ def validate_skills_with_projects(
             skill_norms[skill_norms == 0] = 1e-9
             target_norms[target_norms == 0] = 1e-9
 
-            # Cosine similarity matrix: shape (num_unmatched, num_targets)
             sim_matrix = np.dot(skill_vecs / skill_norms, (target_vecs / target_norms).T)
 
-            for i, skill in enumerate(unmatched_skills):
+            remaining_unvalidated = []
+            for i, skill in enumerate(unvalidated_skills):
                 matched_targets = []
                 max_sim = 0.0
                 for j, (name, _) in enumerate(targets):
@@ -205,21 +226,14 @@ def validate_skills_with_projects(
                     })
                     skill_project_mapping[skill] = matched_targets
                 else:
-                    unvalidated_skills.append(skill)
-                    skill_project_mapping[skill] = []
+                    remaining_unvalidated.append(skill)
+            unvalidated_skills = remaining_unvalidated
         except Exception as e:
             log_warning(f"Batch embedding validation fallback: {e}", context='ats_scorer')
-            for s in unmatched_skills:
-                unvalidated_skills.append(s)
-                skill_project_mapping[s] = []
-    else:
-        for s in unmatched_skills:
-            unvalidated_skills.append(s)
-            skill_project_mapping[s] = []
 
-    validation_percentage = len(validated_skills) / len(skills)
-    max_val_score = config.component_max.skill_validation
-    validation_score = validation_percentage * max_val_score
+    total_count = len(skills)
+    validation_percentage = len(validated_skills) / total_count if total_count > 0 else 0.0
+    validation_score = min(max_val_score, round(validation_percentage * max_val_score, 2))
 
     return {
         'validated_skills':      validated_skills,
@@ -227,6 +241,10 @@ def validate_skills_with_projects(
         'validation_percentage': validation_percentage,
         'skill_project_mapping': skill_project_mapping,
         'validation_score':      validation_score,
+        'skill_records':         evidence_res.get('skill_records', []),
+        'category_counts':       evidence_res.get('category_counts', {}),
+        'status_counts':         evidence_res.get('status_counts', {}),
+        'warnings':              evidence_res.get('warnings', []),
     }
 
 #01: formatting score

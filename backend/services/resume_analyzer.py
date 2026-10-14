@@ -50,11 +50,13 @@ def analyze_full_resume(
         'github':    parsed_resume.get('github'),
         'portfolio': None,
     }
+    detected_sections_obj = parsed_resume.get('_detected_sections')
     skill_validation = validate_skills_with_projects(
         skills=skills,
         projects=projects,
         experience_entries=parsed_resume.get('experience', []),
         embedder=embedder,
+        detected_sections=detected_sections_obj,
     )
 
     jd_comparison_result = None
@@ -168,6 +170,10 @@ def analyze_full_resume(
         "total":           total_skills,
         "validated_count": len(validated_raw),
         "validation_pct":  val_pct,
+        "skill_records":   skill_validation.get('skill_records', []),
+        "category_counts": skill_validation.get('category_counts', {}),
+        "status_counts":   skill_validation.get('status_counts', {}),
+        "warnings":        skill_validation.get('warnings', []),
     }
 
     return {

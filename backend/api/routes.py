@@ -117,6 +117,10 @@ async def analyze_resume(
         total           = svd_raw.get('total', 0),
         validated_count = svd_raw.get('validated_count', 0),
         validation_pct  = svd_raw.get('validation_pct', 0.0),
+        skill_records   = svd_raw.get('skill_records', []),
+        category_counts = svd_raw.get('category_counts', {}),
+        status_counts   = svd_raw.get('status_counts', {}),
+        warnings        = svd_raw.get('warnings', []),
     )
 
     response = AnalysisResponse(

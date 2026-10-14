@@ -21,6 +21,10 @@ class SkillValidationDetails(BaseModel):
     total: int = 0
     validated_count: int = 0
     validation_pct: float = 0.0
+    skill_records: List[Dict[str, Any]] = []
+    category_counts: Dict[str, int] = {}
+    status_counts: Dict[str, int] = {}
+    warnings: List[str] = []
 
 class IssueDetail(BaseModel):
     issue_title: str
